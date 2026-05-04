@@ -5,8 +5,16 @@ import json
 import pandas as pd
 from datetime import datetime
 import numpy as np
+import sys
+import subprocess
+import threading
 
-API_URL = "http://localhost:8000"
+def run_api():
+    subprocess.run([sys.executable, "-m", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"])
+
+threading.Thread(target=run_api, daemon=True).start()
+API_URL = os.getenv("API_URL", "http://localhost:8000")
+#API_URL = "http://localhost:8000"
 
 st.set_page_config(
     page_title="GigaCardioAgent - AI Кардиолог",
