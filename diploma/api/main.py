@@ -2,27 +2,79 @@
 import sys
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent.parent))
+print("=== main.py: НАЧАЛО ЗАГРУЗКИ ===")
+print(f"1. Текущая директория: {Path.cwd()}")
+print(f"2. Путь к файлу: {Path(__file__)}")
+print(f"3. Родительская директория (для sys.path): {Path(__file__).parent.parent}")
 
+# Добавляем путь для импорта backend
+sys.path.append(str(Path(__file__).parent.parent))
+print(f"4. sys.path после добавления: {sys.path}")
+
+print("5. Импортируем fastapi и другие модули...")
 from fastapi import FastAPI, UploadFile, HTTPException, File, Form
 from starlette.responses import JSONResponse
 from typing import Optional, List
 from datetime import datetime
 import uvicorn
-from backend.service import AppService, CLASS_NAMES
+print("6. ✅ Базовые модули импортированы")
 
-app = FastAPI(title="🚀 GigaCardioAgent API v2.0", version="2.0")
+print("7. Импортируем backend.service...")
+try:
+    from backend.service import AppService, CLASS_NAMES
+    print("8. ✅ AppService и CLASS_NAMES импортированы успешно!")
+    print(f"9. CLASS_NAMES = {CLASS_NAMES}")
+except Exception as e:
+    print(f"8. ❌ Ошибка импорта backend.service: {e}")
+    import traceback
+    traceback.print_exc()
+    raise
+
+print("10. Создаём FastAPI приложение...")
+app = FastAPI(
+    title="🚀 GigaCardioAgent API v2.0", 
+    version="2.0", 
+    root_path="/"
+)
+print("11. ✅ FastAPI приложение создано")
 
 service = None
+print("12. Переменная service инициализирована как None")
 
+print("13. Регистрируем startup_event...")
 @app.on_event("startup")
 async def startup_event():
     global service
-    service = AppService()
+    print("=== STARTUP_EVENT: НАЧАЛО ===")
+    print("14. Создаём экземпляр AppService...")
+    try:
+        service = AppService()
+        print("15. ✅ AppService успешно создан!")
+        print(f"16. service.config.device = {service.config.device}")
+        print(f"17. service.model is None? {service.model is None}")
+        print(f"18. service.rag is None? {service.rag is None}")
+        print(f"19. service.gigachat_client is None? {service.gigachat_client is None}")
+    except Exception as e:
+        print(f"15. ❌ Ошибка при создании AppService: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+    
+    print("=== ВСЕ ЗАРЕГИСТРИРОВАННЫЕ МАРШРУТЫ ===")
+    for route in app.routes:
+        methods = getattr(route, 'methods', None)
+        if methods:
+            print(f"  {methods} {route.path}")
+        else:
+            print(f"  {route.path}")
+    print("====================================")
     print("✅ GigaCardioAgent API запущен!")
+    print("=== STARTUP_EVENT: КОНЕЦ ===")
 
+print("20. Регистрируем корневой эндпоинт...")
 @app.get("/")
 async def root():
+    print("*** ВЫЗВАН КОРНЕВОЙ ЭНДПОИНТ ***")
     return {
         "message": "🚀 GigaCardioAgent API v2.0 ready!",
         "endpoints": {
@@ -35,9 +87,12 @@ async def root():
         "model_loaded": service.model is not None if service else False,
         "classes": CLASS_NAMES
     }
+print("21. ✅ Корневой эндпоинт зарегистрирован")
 
+print("22. Регистрируем health эндпоинт...")
 @app.get("/health")
 async def health():
+    print("*** ВЫЗВАН HEALTH ЭНДПОИНТ ***")
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
@@ -45,12 +100,15 @@ async def health():
         "model_loaded": service.model is not None if service else False,
         "classes": CLASS_NAMES
     }
+print("23. ✅ Health эндпоинт зарегистрирован")
 
+print("24. Регистрируем analyze_ecg эндпоинт...")
 @app.post("/analyze_ecg")
 async def analyze_ecg(
     ecg_file: UploadFile = File(...),
     clinical_info: str = Form(...)
 ):
+    print(f"*** ВЫЗВАН analyze_ecg: clinical_info={clinical_info[:50] if clinical_info else 'empty'}... ***")
     if not service:
         raise HTTPException(503, "Сервис не инициализирован")
     
@@ -81,9 +139,12 @@ async def analyze_ecg(
         raise
     except Exception as e:
         raise HTTPException(500, f"Ошибка анализа ЭКГ: {str(e)}")
+print("25. ✅ analyze_ecg эндпоинт зарегистрирован")
 
+print("26. Регистрируем analyze_clinical эндпоинт...")
 @app.post("/analyze_clinical")
 async def analyze_clinical(clinical_info: str = Form(...)):
+    print(f"*** ВЫЗВАН analyze_clinical: clinical_info={clinical_info[:50] if clinical_info else 'empty'}... ***")
     if not service:
         raise HTTPException(503, "Сервис не инициализирован")
     
@@ -108,7 +169,9 @@ async def analyze_clinical(clinical_info: str = Form(...)):
         raise
     except Exception as e:
         raise HTTPException(500, f"Ошибка клинического анализа: {str(e)}")
+print("27. ✅ analyze_clinical эндпоинт зарегистрирован")
 
+print("28. Регистрируем chat эндпоинт...")
 @app.post("/chat")
 async def chat(
     message: str = Form(...),
@@ -117,6 +180,7 @@ async def chat(
     confidence: float = Form(0.0),
     rag_context: List[str] = Form([])
 ):
+    print(f"*** ВЫЗВАН chat: message={message[:50] if message else 'empty'}... ***")
     if not service:
         raise HTTPException(503, "Сервис не инициализирован")
     
@@ -142,11 +206,15 @@ async def chat(
         
     except Exception as e:
         raise HTTPException(500, f"Ошибка чата: {str(e)}")
+print("29. ✅ chat эндпоинт зарегистрирован")
 
+print("30. Регистрируем обработчик исключений...")
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"success": False, "error": exc.detail}
     )
+print("31. ✅ Обработчик исключений зарегистрирован")
 
+print("=== main.py: КОНЕЦ ЗАГРУЗКИ ===")
