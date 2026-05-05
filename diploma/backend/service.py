@@ -1,6 +1,4 @@
-
-
-# diploma/backend/service.py
+# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С ЛЕНИВОЙ ЗАГРУЗКОЙ
 
 import sys
 from pathlib import Path
@@ -37,8 +35,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 load_dotenv()
-
-
 
 @dataclass
 class Config:
@@ -107,7 +103,15 @@ class QdrantRAG:
         else:
             self.client = None
             print("⚠️ Qdrant недоступен")
-        self.embedding_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+        self._embedding_model = None
+
+    @property
+    def embedding_model(self):
+        """Ленивая загрузка модели эмбеддингов"""
+        if self._embedding_model is None:
+            print("🚀 Ленивая загрузка: инициализация SentenceTransformer...")
+            self._embedding_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+        return self._embedding_model
 
     async def search_similar(self, diagnosis: str, clinical: str, limit: int = 10) -> List[str]:
         """Поиск похожих документов в базе знаний"""
@@ -152,16 +156,21 @@ class QdrantRAG:
 
 class GigaChatClient:
     def __init__(self, config):
-        if config.gigachat_credentials:
-            self.gigachat = GigaChat(
-                credentials=config.gigachat_credentials,
+        self.config = config
+        self._gigachat = None
+
+    @property
+    def gigachat(self):
+        """Ленивая загрузка GigaChat клиента"""
+        if self._gigachat is None and self.config.gigachat_credentials:
+            print("🚀 Ленивая загрузка: инициализация GigaChat...")
+            self._gigachat = GigaChat(
+                credentials=self.config.gigachat_credentials,
                 scope="GIGACHAT_API_PERS",
-                verify_ssl_certs=config.verify_ssl,
+                verify_ssl_certs=self.config.verify_ssl,
                 model="GigaChat-Pro"
             )
-        else:
-            self.gigachat = None
-            print("⚠️ GigaChat недоступен")
+        return self._gigachat
 
     async def chat_with_rag(self, diagnosis: str, clinical: str, confidence: float, 
                           rag_context: List[str], response_format: str = "structured") -> str:
@@ -247,11 +256,36 @@ class ProECGNet_SOTA(nn.Module):
 class AppService:
     def __init__(self):
         self.config = config
-        self.rag = QdrantRAG(config)
-        self.gigachat_client = GigaChatClient(config)
-        self.model = self._load_model()
         self.device = config.device
-        print(f"✅ AppService инициализирован на {self.device}")
+        # Ленивая загрузка - ничего не инициализируем здесь
+        self._rag = None
+        self._gigachat_client = None
+        self._model = None
+        print(f"✅ AppService инициализирован (легковесная версия) на {self.device}")
+
+    @property
+    def rag(self):
+        """Ленивая загрузка RAG компонента"""
+        if self._rag is None:
+            print("🚀 Ленивая загрузка: инициализация RAG...")
+            self._rag = QdrantRAG(self.config)
+        return self._rag
+
+    @property
+    def gigachat_client(self):
+        """Ленивая загрузка GigaChat клиента"""
+        if self._gigachat_client is None:
+            print("🚀 Ленивая загрузка: инициализация GigaChat клиента...")
+            self._gigachat_client = GigaChatClient(self.config)
+        return self._gigachat_client
+
+    @property
+    def model(self):
+        """Ленивая загрузка нейросетевой модели"""
+        if self._model is None:
+            print("🚀 Ленивая загрузка: инициализация нейросети...")
+            self._model = self._load_model()
+        return self._model
 
     def _load_model(self) -> ProECGNet_SOTA:
         """Загрузка модели"""
