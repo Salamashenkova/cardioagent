@@ -1,20 +1,17 @@
-# streamlit_app.py
+# diploma/ui/app.py
 import streamlit as st
 import requests
 import json
 import pandas as pd
 from datetime import datetime
 import numpy as np
-import sys
-import subprocess
-import threading
+import os  # ✅ ДОБАВЛЕН импорт os
 
-def run_api():
-    subprocess.run([sys.executable, "-m", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"])
+# ✅ УБРАН код запуска FastAPI через threading (на Render это не нужно)
+# FastAPI запускается отдельным сервисом
 
-threading.Thread(target=run_api, daemon=True).start()
+# ✅ Используем переменную окружения для URL бэкенда
 API_URL = os.getenv("API_URL", "http://localhost:8000")
-#API_URL = "http://localhost:8000"
 
 st.set_page_config(
     page_title="GigaCardioAgent - AI Кардиолог",
@@ -147,7 +144,7 @@ if api_status:
         if len(classes) > 8:
             st.sidebar.markdown(f"... и {len(classes) - 8} других")
 else:
-    st.sidebar.error("❌ API не доступен!\n\nЗапустите сервер командой:\n`python api.py`")
+    st.sidebar.error(f"❌ API не доступен! URL: {API_URL}\n\nУбедитесь, что бэкенд развернут и переменная API_URL настроена правильно.")
 
 st.markdown("""
 <div class="main-header">
@@ -413,7 +410,7 @@ with tab4:
     if api_status:
         st.markdown("---")
         st.subheader("📊 Статус системы")
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Устройство", api_status.get('device', 'N/A'))
         with col2:
