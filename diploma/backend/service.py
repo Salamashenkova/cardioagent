@@ -1,4 +1,4 @@
-# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С ЛЕНИВОЙ ЗАГРУЗКОЙ
+# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С ЛЕНИВОЙ ЗАГРУЗКОЙ И ФИКС ПУТЕЙ
 
 import sys
 from pathlib import Path
@@ -45,6 +45,26 @@ class Config:
     qdrant_collection: str = "kr_production_cloud"
     gigachat_credentials: str = os.getenv("GIGACHAT_CREDENTIALS")
     verify_ssl: bool = os.getenv("VERIFY_SSL", "false").lower() == "true"
+    
+    def get_model_path(self):
+        """Умный поиск пути к модели с пробой разных вариантов"""
+        # Пробуем путь из переменной окружения
+        if self.model_path.exists():
+            return self.model_path
+        
+        # Пробуем относительно папки api (где запускается uvicorn)
+        api_relative = Path("../") / self.model_path
+        if api_relative.exists():
+            return api_relative
+        
+        # Пробуем относительно корня проекта
+        root_relative = Path(".") / self.model_path
+        if root_relative.exists():
+            return root_relative
+        
+        # Если ничего не найдено — возвращаем исходный путь
+        print(f"⚠️ Модель не найдена по путям: {self.model_path}, {api_relative}, {root_relative}")
+        return self.model_path
 
 config = Config()
 CLASS_NAMES = ["NORM", "MI", "STTC", "CD", "HYP"]
@@ -288,12 +308,15 @@ class AppService:
         return self._model
 
     def _load_model(self) -> ProECGNet_SOTA:
-        """Загрузка модели"""
+        """Загрузка модели с умным поиском пути"""
         try:
-            print(f"🔄 Загрузка модели: {self.config.model_path}")
+            # Получаем правильный путь к модели
+            model_path = self.config.get_model_path()
+            print(f"🔄 Загрузка модели из: {model_path}")
+            
             model = ProECGNet_SOTA(num_classes=len(CLASS_NAMES))
             
-            checkpoint = torch.load(self.config.model_path, map_location=self.config.device)
+            checkpoint = torch.load(model_path, map_location=self.config.device)
             
             if isinstance(checkpoint, dict):
                 state_dict = checkpoint.get('model_state_dict', checkpoint.get('state_dict', checkpoint))
@@ -312,10 +335,18 @@ class AppService:
             
         except Exception as e:
             print(f"❌ Ошибка загрузки модели: {e}")
+            print(f"🔍 Путь к модели: {self.config.model_path}")
+            print(f"🔍 Текущая рабочая директория: {os.getcwd()}")
+            
+            # Пытаемся найти модель поиском по директории models
+            models_dir = Path("models")
+            if models_dir.exists():
+                print(f"📁 Содержимое папки models/: {list(models_dir.glob('*.pth'))}")
+            
             model = ProECGNet_SOTA(num_classes=len(CLASS_NAMES))
             model.to(self.config.device)
             model.eval()
-            print("⚠️ Используется fallback модель")
+            print("⚠️ Используется fallback модель (случайные веса)")
             return model
 
     def _load_ecg_from_file(self, file_content: bytes, filename: str) -> np.ndarray:
