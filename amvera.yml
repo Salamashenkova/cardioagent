@@ -3,12 +3,11 @@ meta:
   toolchain:
     name: pip
     version: "3.12"
+
 build:
-  requirementsPath: requirements.txt
-  useCache: true
+  requirementsPath: diploma/requirements.txt
+
 run:
-  scriptName: null
-  command: uvicorn diploma.api.main:app
+  command: cd diploma && uvicorn api.main:app --host 0.0.0.0 --port 8000
+  containerPort: 8000  
   persistenceMount: /data
-  containerPort: "8000"
-  servicePort: "80"
