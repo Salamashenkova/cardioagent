@@ -1,9 +1,15 @@
-# api.py
+# diploma/api/main.py
 from fastapi import FastAPI, UploadFile, HTTPException, File, Form
 from starlette.responses import JSONResponse
 from typing import Optional, List
 from datetime import datetime
 import uvicorn
+import sys
+from pathlib import Path
+
+# Добавляем папку diploma в путь для импорта backend
+sys.path.append(str(Path(__file__).parent.parent))
+
 from backend.service import AppService, CLASS_NAMES
 
 app = FastAPI(title="🚀 GigaCardioAgent API v2.0", version="2.0")
