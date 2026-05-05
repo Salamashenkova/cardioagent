@@ -1,13 +1,20 @@
-# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С ЛЕНИВОЙ ЗАГРУЗКОЙ И ФИКС ПУТЕЙ
+# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С ЛЕНИВОЙ ЗАГРУЗКОЙ, ФИКС ПУТЕЙ И ПРОВЕРКАМИ
+
+print("=== backend/service.py: НАЧАЛО ЗАГРУЗКИ ===")
+print("1. Импортируем базовые модули...")
 
 import sys
 from pathlib import Path
 
 # Добавляем путь к корневой папке diploma
 sys.path.append(str(Path(__file__).parent.parent))
+print(f"2. sys.path после добавления: {sys.path}")
 
+print("3. Импортируем urllib3...")
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+print("4. Импортируем scipy.io...")
 import scipy.io as sio
 import io
 import pandas as pd
@@ -16,6 +23,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 import datetime
+print("5. Импортируем torch...")
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -34,8 +42,11 @@ from gigachat.models import Chat
 import warnings
 warnings.filterwarnings("ignore")
 
+print("6. Загружаем dotenv...")
 load_dotenv()
+print("7. ✅ Базовые модули импортированы")
 
+print("8. Определяем класс Config...")
 @dataclass
 class Config:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -48,28 +59,38 @@ class Config:
     
     def get_model_path(self):
         """Умный поиск пути к модели с пробой разных вариантов"""
+        print(f"   get_model_path: ищем модель...")
         # Пробуем путь из переменной окружения
         if self.model_path.exists():
+            print(f"   ✅ Модель найдена по пути: {self.model_path}")
             return self.model_path
         
         # Пробуем относительно папки api (где запускается uvicorn)
         api_relative = Path("../") / self.model_path
         if api_relative.exists():
+            print(f"   ✅ Модель найдена по пути: {api_relative}")
             return api_relative
         
         # Пробуем относительно корня проекта
         root_relative = Path(".") / self.model_path
         if root_relative.exists():
+            print(f"   ✅ Модель найдена по пути: {root_relative}")
             return root_relative
         
         # Если ничего не найдено — возвращаем исходный путь
-        print(f"⚠️ Модель не найдена по путям: {self.model_path}, {api_relative}, {root_relative}")
+        print(f"   ⚠️ Модель не найдена по путям: {self.model_path}, {api_relative}, {root_relative}")
         return self.model_path
 
+print("9. Создаём экземпляр Config...")
 config = Config()
+print(f"10. Config создан: device={config.device}, model_path={config.model_path}")
+
 CLASS_NAMES = ["NORM", "MI", "STTC", "CD", "HYP"]
+print(f"11. CLASS_NAMES = {CLASS_NAMES}")
+print(f"12. Qdrant URL: {bool(config.qdrant_url)}, GigaChat credentials: {bool(config.gigachat_credentials)}")
 print(f"🚀 HybridRAG Pro v2.0 | Device: {config.device} | Qdrant: {bool(config.qdrant_url)} | GigaChat: {bool(config.gigachat_credentials)}")
 
+print("13. Определяем класс BM25...")
 class BM25:
     """BM25 с MIN-MAX нормализацией [0,1]"""
     def __init__(self, docs, k1=1.2, b=0.75):
@@ -105,32 +126,39 @@ class BM25:
             return [(s - min_score) / (max_score - min_score) for s in raw_scores]
         return [0.5] * len(raw_scores)
 
+print("14. ✅ Класс BM25 определён")
+
+print("15. Определяем класс QdrantRAG...")
 class QdrantRAG:
     """RAG поиск в базе знаний"""
     def __init__(self, config):
+        print(f"   QdrantRAG.__init__: начало")
         self.config = config
         if config.qdrant_url and config.qdrant_api_key:
             try:
+                print(f"   Подключаемся к Qdrant: {config.qdrant_url}")
                 self.client = QdrantClient(
                     url=config.qdrant_url, 
                     api_key=config.qdrant_api_key,
                     timeout=60.0
                 )
-                print(f"✅ Qdrant подключен: {config.qdrant_url}")
+                print(f"   ✅ Qdrant подключен: {config.qdrant_url}")
             except Exception as e:
                 self.client = None
-                print(f"⚠️ Ошибка подключения к Qdrant: {e}")
+                print(f"   ⚠️ Ошибка подключения к Qdrant: {e}")
         else:
             self.client = None
-            print("⚠️ Qdrant недоступен")
+            print("   ⚠️ Qdrant недоступен")
         self._embedding_model = None
+        print(f"   QdrantRAG.__init__: завершён")
 
     @property
     def embedding_model(self):
         """Ленивая загрузка модели эмбеддингов"""
         if self._embedding_model is None:
-            print("🚀 Ленивая загрузка: инициализация SentenceTransformer...")
+            print("   🚀 Ленивая загрузка: инициализация SentenceTransformer...")
             self._embedding_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+            print("   ✅ SentenceTransformer загружен")
         return self._embedding_model
 
     async def search_similar(self, diagnosis: str, clinical: str, limit: int = 10) -> List[str]:
@@ -138,13 +166,12 @@ class QdrantRAG:
         if not self.client:
             return ["Qdrant недоступен - используем общие рекомендации"]
         
-        # Формируем поисковый запрос
         if diagnosis and diagnosis != "Клинический анализ симптомов (без ЭКГ)":
             query_text = f"{diagnosis} {clinical}"
         else:
             query_text = clinical
         
-        print(f"🔍 Поиск в базе знаний: {query_text[:100]}...")
+        print(f"   🔍 Поиск в базе знаний: {query_text[:100]}...")
         
         try:
             query_vec = self.embedding_model.encode(query_text).tolist()
@@ -171,25 +198,31 @@ class QdrantRAG:
             return results
             
         except Exception as e:
-            print(f"Qdrant search error: {e}")
+            print(f"   Qdrant search error: {e}")
             return ["Ошибка поиска в базе знаний. Используем общие рекомендации."]
 
+print("16. ✅ Класс QdrantRAG определён")
+
+print("17. Определяем класс GigaChatClient...")
 class GigaChatClient:
     def __init__(self, config):
+        print(f"   GigaChatClient.__init__: начало")
         self.config = config
         self._gigachat = None
+        print(f"   GigaChatClient.__init__: завершён")
 
     @property
     def gigachat(self):
         """Ленивая загрузка GigaChat клиента"""
         if self._gigachat is None and self.config.gigachat_credentials:
-            print("🚀 Ленивая загрузка: инициализация GigaChat...")
+            print("   🚀 Ленивая загрузка: инициализация GigaChat...")
             self._gigachat = GigaChat(
                 credentials=self.config.gigachat_credentials,
                 scope="GIGACHAT_API_PERS",
                 verify_ssl_certs=self.config.verify_ssl,
                 model="GigaChat-Pro"
             )
+            print("   ✅ GigaChat инициализирован")
         return self._gigachat
 
     async def chat_with_rag(self, diagnosis: str, clinical: str, confidence: float, 
@@ -225,10 +258,13 @@ class GigaChatClient:
                     chunks.append(delta)
                 return "".join(chunks).strip()
             except Exception as e:
-                print(f"GigaChat retry {attempt+1}: {e}")
+                print(f"   GigaChat retry {attempt+1}: {e}")
                 await asyncio.sleep(2 ** attempt)
         return "🚨 GIGA OFFLINE: АСА 160мг + ЭКГ повтор + кардиолог ОЧНО"
 
+print("18. ✅ Класс GigaChatClient определён")
+
+print("19. Определяем класс ProECGNet_SOTA...")
 class ProECGNet_SOTA(nn.Module):
     def __init__(self, num_classes=5):
         super().__init__()
@@ -273,21 +309,31 @@ class ProECGNet_SOTA(nn.Module):
         x = x.squeeze(-1)
         return self.head(x)
 
+print("20. ✅ Класс ProECGNet_SOTA определён")
+
+print("21. Определяем класс AppService...")
 class AppService:
     def __init__(self):
+        print("=== AppService.__init__: НАЧАЛО ===")
+        print("  1. Сохраняем config...")
         self.config = config
+        print("  2. Сохраняем device...")
         self.device = config.device
-        # Ленивая загрузка - ничего не инициализируем здесь
+        print(f"  3. device = {self.device}")
+        print("  4. Инициализируем _rag = None...")
         self._rag = None
+        print("  5. Инициализируем _gigachat_client = None...")
         self._gigachat_client = None
+        print("  6. Инициализируем _model = None...")
         self._model = None
-        print(f"✅ AppService инициализирован (легковесная версия) на {self.device}")
+        print(f"  ✅ AppService инициализирован (легковесная версия) на {self.device}")
+        print("=== AppService.__init__: КОНЕЦ ===")
 
     @property
     def rag(self):
         """Ленивая загрузка RAG компонента"""
         if self._rag is None:
-            print("🚀 Ленивая загрузка: инициализация RAG...")
+            print("  🚀 Ленивая загрузка: инициализация RAG...")
             self._rag = QdrantRAG(self.config)
         return self._rag
 
@@ -295,7 +341,7 @@ class AppService:
     def gigachat_client(self):
         """Ленивая загрузка GigaChat клиента"""
         if self._gigachat_client is None:
-            print("🚀 Ленивая загрузка: инициализация GigaChat клиента...")
+            print("  🚀 Ленивая загрузка: инициализация GigaChat клиента...")
             self._gigachat_client = GigaChatClient(self.config)
         return self._gigachat_client
 
@@ -303,54 +349,69 @@ class AppService:
     def model(self):
         """Ленивая загрузка нейросетевой модели"""
         if self._model is None:
-            print("🚀 Ленивая загрузка: инициализация нейросети...")
+            print("  🚀 Ленивая загрузка: инициализация нейросети...")
             self._model = self._load_model()
         return self._model
 
     def _load_model(self) -> ProECGNet_SOTA:
         """Загрузка модели с умным поиском пути"""
+        print("=== _load_model: НАЧАЛО ===")
         try:
-            # Получаем правильный путь к модели
             model_path = self.config.get_model_path()
-            print(f"🔄 Загрузка модели из: {model_path}")
+            print(f"  1. Загрузка модели из: {model_path}")
             
+            print("  2. Создаём экземпляр модели...")
             model = ProECGNet_SOTA(num_classes=len(CLASS_NAMES))
+            print("  3. Модель создана, загружаем checkpoint...")
             
             checkpoint = torch.load(model_path, map_location=self.config.device)
+            print("  4. Checkpoint загружен")
             
             if isinstance(checkpoint, dict):
                 state_dict = checkpoint.get('model_state_dict', checkpoint.get('state_dict', checkpoint))
+                print("  5. Извлекли state_dict из словаря")
             else:
                 state_dict = checkpoint
+                print("  5. Checkpoint является state_dict")
                 
             if all(k.startswith('module.') for k in state_dict.keys()):
                 state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+                print("  6. Удалили 'module.' из ключей")
+            else:
+                print("  6. 'module.' не обнаружено")
             
+            print("  7. Загружаем state_dict в модель...")
             model.load_state_dict(state_dict, strict=False)
+            print("  8. Перемещаем модель на устройство...")
             model.to(self.config.device)
+            print("  9. Переводим модель в режим eval...")
             model.eval()
             
-            print(f"✅ Модель загружена успешно!")
+            print(f"  ✅ Модель загружена успешно!")
+            print("=== _load_model: КОНЕЦ (успех) ===")
             return model
             
         except Exception as e:
-            print(f"❌ Ошибка загрузки модели: {e}")
-            print(f"🔍 Путь к модели: {self.config.model_path}")
-            print(f"🔍 Текущая рабочая директория: {os.getcwd()}")
+            print(f"  ❌ Ошибка загрузки модели: {e}")
+            import traceback
+            traceback.print_exc()
+            print(f"  🔍 Путь к модели: {self.config.model_path}")
+            print(f"  🔍 Текущая рабочая директория: {os.getcwd()}")
             
-            # Пытаемся найти модель поиском по директории models
             models_dir = Path("models")
             if models_dir.exists():
-                print(f"📁 Содержимое папки models/: {list(models_dir.glob('*.pth'))}")
+                print(f"  📁 Содержимое папки models/: {list(models_dir.glob('*.pth'))}")
             
+            print("  ⚠️ Используется fallback модель (случайные веса)")
             model = ProECGNet_SOTA(num_classes=len(CLASS_NAMES))
             model.to(self.config.device)
             model.eval()
-            print("⚠️ Используется fallback модель (случайные веса)")
+            print("=== _load_model: КОНЕЦ (fallback) ===")
             return model
 
     def _load_ecg_from_file(self, file_content: bytes, filename: str) -> np.ndarray:
         """Загрузка ЭКГ из bytes"""
+        print(f"  _load_ecg_from_file: загрузка {filename}")
         try:
             if filename.endswith('.mat'):
                 mat = sio.loadmat(io.BytesIO(file_content))
@@ -372,7 +433,7 @@ class AppService:
             else:
                 raise ValueError(f"Неверная форма: {ecg.shape}")
             
-            print(f"📊 ЭКГ загружена: форма {ecg.shape}")
+            print(f"  📊 ЭКГ загружена: форма {ecg.shape}")
             return ecg.astype(np.float32)
         except Exception as e:
             raise ValueError(f"Ошибка загрузки ЭКГ: {str(e)}")
@@ -396,6 +457,7 @@ class AppService:
 
     def _classify_ecg(self, ecg_tensor: torch.Tensor) -> Tuple[str, float]:
         """Классификация ЭКГ"""
+        print("  _classify_ecg: начало классификации")
         self.model.eval()
         with torch.no_grad():
             output = self.model(ecg_tensor)
@@ -404,15 +466,16 @@ class AppService:
         
         diagnosis = CLASS_NAMES[predicted_idx.item()]
         confidence = confidence.item()
-        print(f"🎯 Диагноз: {diagnosis} (confidence: {confidence:.3f})")
+        print(f"  🎯 Диагноз: {diagnosis} (confidence: {confidence:.3f})")
         return diagnosis, confidence
 
     async def process_ecg(self, ecg_file_content: bytes, filename: str, clinical_notes: str) -> Dict[str, Any]:
         """Анализ ЭКГ с файлом"""
+        print(f"=== process_ecg: начало, filename={filename} ===")
         try:
             ecg_data = self._load_ecg_from_file(ecg_file_content, filename)
             processed_ecg = self._preprocess_ecg(ecg_data)
-            print(f"🔧 После предобработки: форма {processed_ecg.shape}")
+            print(f"  🔧 После предобработки: форма {processed_ecg.shape}")
             
             diagnosis, confidence = self._classify_ecg(processed_ecg)
             rag_results = await self.rag.search_similar(diagnosis, clinical_notes)
@@ -444,8 +507,9 @@ class AppService:
 
     async def analyze_clinical_only(self, clinical_notes: str) -> Dict[str, Any]:
         """Анализ только клинических симптомов без ЭКГ"""
+        print(f"=== analyze_clinical_only: начало ===")
         try:
-            print(f"🩺 Клинический анализ симптомов: {clinical_notes[:100]}...")
+            print(f"  🩺 Клинический анализ симптомов: {clinical_notes[:100]}...")
             
             rag_results = await self.rag.search_similar("", clinical_notes)
             
@@ -513,7 +577,7 @@ class AppService:
             }
             
         except Exception as e:
-            print(f"❌ Ошибка клинического анализа: {e}")
+            print(f"  ❌ Ошибка клинического анализа: {e}")
             import traceback
             traceback.print_exc()
             
@@ -538,3 +602,6 @@ class AppService:
                 "requires_ecg": True,
                 "timestamp": datetime.datetime.now().isoformat()
             }
+
+print("22. ✅ Класс AppService определён")
+print("=== backend/service.py: КОНЕЦ ЗАГРУЗКИ ===")
