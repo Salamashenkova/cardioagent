@@ -1,4 +1,12 @@
-# backend/service.py - ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ
+
+
+# diploma/backend/service.py
+
+import sys
+from pathlib import Path
+
+# Добавляем путь к корневой папке diploma
+sys.path.append(str(Path(__file__).parent.parent))
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -29,6 +37,8 @@ import warnings
 warnings.filterwarnings("ignore")
 
 load_dotenv()
+
+
 
 @dataclass
 class Config:
