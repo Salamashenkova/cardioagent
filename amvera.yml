@@ -8,6 +8,6 @@ build:
   requirementsPath: diploma/requirements.txt
 
 run:
-  command: cd diploma && uvicorn api.main:app --host 0.0.0.0 --port 8000
-  containerPort: 8000  
+  command: cd diploma && streamlit run ui/app.py --server.port 8000 --server.address 0.0.0.0
+  containerPort: 8000
   persistenceMount: /data
