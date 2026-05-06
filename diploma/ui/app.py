@@ -12,7 +12,7 @@ from pathlib import Path
 # Добавляем путь для импортов (если нужно)
 sys.path.append(str(Path(__file__).parent.parent))
 
-# ✅ Используем переменную окружения для URL бэкенда
+# Используем переменную окружения для URL бэкенда
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 st.set_page_config(
@@ -74,6 +74,13 @@ st.markdown("""
         padding: 1rem;
         border-radius: 8px;
         margin: 1rem 0;
+    }
+    .metric-card {
+        background: #f0f2f6;
+        padding: 0.8rem;
+        border-radius: 8px;
+        text-align: center;
+        margin: 0.5rem;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -230,6 +237,34 @@ with tab1:
                     <p>🕐 {result['timestamp']}</p>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # Отображение топ-3 диагнозов
+                if result.get('top3_predictions'):
+                    st.subheader("📊 Все возможные диагнозы")
+                    cols = st.columns(3)
+                    for i, (diag, prob) in enumerate(result['top3_predictions']):
+                        with cols[i]:
+                            st.metric(
+                                label=f"{diag}",
+                                value=f"{prob:.1%}",
+                                delta=None
+                            )
+                    
+                    # Визуализация распределения вероятностей
+                    st.subheader("📈 Распределение вероятностей")
+                    prob_data = []
+                    for diag, prob in result['top3_predictions']:
+                        prob_data.append({"Диагноз": diag, "Вероятность": prob})
+                    
+                    # Добавляем остальные классы с вероятностью 0
+                    all_classes = ["NORM", "MI", "STTC", "CD", "HYP"]
+                    existing = [p[0] for p in result['top3_predictions']]
+                    for cls in all_classes:
+                        if cls not in existing:
+                            prob_data.append({"Диагноз": cls, "Вероятность": 0.0})
+                    
+                    df_probs = pd.DataFrame(prob_data)
+                    st.bar_chart(df_probs.set_index("Диагноз"))
                 
                 with st.expander("📋 Структурированные рекомендации", expanded=True):
                     rec = result.get('structured_recommendation', {})
