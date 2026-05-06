@@ -5,10 +5,12 @@ import json
 import pandas as pd
 from datetime import datetime
 import numpy as np
-import os  # ✅ ДОБАВЛЕН импорт os
+import os
+import sys
+from pathlib import Path
 
-# ✅ УБРАН код запуска FastAPI через threading (на Render это не нужно)
-# FastAPI запускается отдельным сервисом
+# Добавляем путь для импортов (если нужно)
+sys.path.append(str(Path(__file__).parent.parent))
 
 # ✅ Используем переменную окружения для URL бэкенда
 API_URL = os.getenv("API_URL", "http://localhost:8000")
@@ -87,29 +89,37 @@ def check_api_health():
         response = requests.get(f"{API_URL}/health", timeout=5)
         if response.status_code == 200:
             return response.json()
-    except:
-        pass
+    except Exception as e:
+        print(f"Health check error: {e}")
     return None
 
 def analyze_ecg(file, clinical_info):
     with st.spinner("🫀 Анализируем ЭКГ..."):
         files = {"ecg_file": file}
         data = {"clinical_info": clinical_info}
-        response = requests.post(f"{API_URL}/analyze_ecg", files=files, data=data)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Ошибка API: {response.text}")
+        try:
+            response = requests.post(f"{API_URL}/analyze_ecg", files=files, data=data, timeout=60)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                st.error(f"Ошибка API: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            st.error(f"Ошибка подключения: {e}")
             return None
 
 def analyze_clinical_only(clinical_info):
     with st.spinner("🩺 Анализируем симптомы..."):
         data = {"clinical_info": clinical_info}
-        response = requests.post(f"{API_URL}/analyze_clinical", data=data)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Ошибка API: {response.text}")
+        try:
+            response = requests.post(f"{API_URL}/analyze_clinical", data=data, timeout=60)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                st.error(f"Ошибка API: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            st.error(f"Ошибка подключения: {e}")
             return None
 
 def chat_with_bot(message, diagnosis, confidence, clinical_info, rag_context):
@@ -121,10 +131,16 @@ def chat_with_bot(message, diagnosis, confidence, clinical_info, rag_context):
             "clinical_info": clinical_info,
             "rag_context": rag_context
         }
-        response = requests.post(f"{API_URL}/chat", data=data)
-        if response.status_code == 200:
-            return response.json()
-        return None
+        try:
+            response = requests.post(f"{API_URL}/chat", data=data, timeout=60)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                st.error(f"Ошибка API: {response.status_code}")
+                return None
+        except Exception as e:
+            st.error(f"Ошибка подключения: {e}")
+            return None
 
 st.sidebar.title("🔌 Статус системы")
 api_status = check_api_health()
@@ -168,8 +184,8 @@ with tab1:
         st.subheader("📁 Загрузка ЭКГ")
         ecg_file = st.file_uploader(
             "Выберите файл ЭКГ",
-            type=['mat'],
-            help="Поддерживаются форматы: .mat (PTB-XL)"
+            type=['mat', 'npy', 'csv'],
+            help="Поддерживаются форматы: .mat (PTB-XL), .npy, .csv"
         )
         
         if ecg_file:
@@ -394,7 +410,8 @@ with tab4:
     st.markdown("""
     #### 📁 Форматы файлов:
     - `.mat` - PTB-XL датасет (12 отведений, 5000 точек)
-    
+    - `.npy` - NumPy массивы
+    - `.csv` - Табличные данные
     
     #### 🔄 API Endpoints:
     - `POST /analyze_ecg` - Анализ с загрузкой ЭКГ
@@ -418,7 +435,6 @@ with tab4:
             st.metric("Модель", status)
         with col3:
             st.metric("Диагнозов", len(api_status.get('classes', [])))
-        
 
 st.markdown("---")
 st.markdown(
