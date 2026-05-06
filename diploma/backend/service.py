@@ -1,4 +1,4 @@
-# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С ЛЕНИВОЙ ЗАГРУЗКОЙ, ФИКС ПУТЕЙ И ПРОВЕРКАМИ
+# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С РАСШИРЕННЫМ ВЫВОДОМ УВЕРЕННОСТИ
 
 print("=== backend/service.py: НАЧАЛО ЗАГРУЗКИ ===")
 print("1. Импортируем базовые модули...")
@@ -53,31 +53,41 @@ class Config:
     model_path: Path = Path(os.getenv("MODEL_PATH", "models/ProECGNetbeststtc.pth"))
     qdrant_url: str = os.getenv("QDRANT_URL")
     qdrant_api_key: str = os.getenv("QDRANT_API_KEY")
-    qdrant_collection: str = "kr_production_cloud"
+    qdrant_collection: str = os.getenv("QDRANT_COLLECTION", "kr_production_cloud")
     gigachat_credentials: str = os.getenv("GIGACHAT_CREDENTIALS")
     verify_ssl: bool = os.getenv("VERIFY_SSL", "false").lower() == "true"
+    
+    def __post_init__(self):
+        """Проверка наличия необходимых переменных"""
+        if not self.qdrant_url or not self.qdrant_api_key:
+            print("⚠️ ВНИМАНИЕ: Qdrant не настроен! Добавьте переменные QDRANT_URL и QDRANT_API_KEY в окружение.")
+        if not self.gigachat_credentials:
+            print("⚠️ ВНИМАНИЕ: GigaChat не настроен! Добавьте переменную GIGACHAT_CREDENTIALS в окружение.")
     
     def get_model_path(self):
         """Умный поиск пути к модели с пробой разных вариантов"""
         print(f"   get_model_path: ищем модель...")
-        # Пробуем путь из переменной окружения
         if self.model_path.exists():
             print(f"   ✅ Модель найдена по пути: {self.model_path}")
             return self.model_path
         
-        # Пробуем относительно папки api (где запускается uvicorn)
         api_relative = Path("../") / self.model_path
         if api_relative.exists():
             print(f"   ✅ Модель найдена по пути: {api_relative}")
             return api_relative
         
-        # Пробуем относительно корня проекта
         root_relative = Path(".") / self.model_path
         if root_relative.exists():
             print(f"   ✅ Модель найдена по пути: {root_relative}")
             return root_relative
         
-        # Если ничего не найдено — возвращаем исходный путь
+        models_dir = Path("models")
+        if models_dir.exists():
+            pth_files = list(models_dir.glob("*.pth"))
+            if pth_files:
+                print(f"   ✅ Найден файл модели: {pth_files[0]}")
+                return pth_files[0]
+        
         print(f"   ⚠️ Модель не найдена по путям: {self.model_path}, {api_relative}, {root_relative}")
         return self.model_path
 
@@ -92,7 +102,6 @@ print(f"🚀 HybridRAG Pro v2.0 | Device: {config.device} | Qdrant: {bool(config
 
 print("13. Определяем класс BM25...")
 class BM25:
-    """BM25 с MIN-MAX нормализацией [0,1]"""
     def __init__(self, docs, k1=1.2, b=0.75):
         self.k1, self.b = k1, b
         self.doc_freqs, self.idf, self.doc_lens, self.avgdl = self._precompute(docs)
@@ -130,7 +139,6 @@ print("14. ✅ Класс BM25 определён")
 
 print("15. Определяем класс QdrantRAG...")
 class QdrantRAG:
-    """RAG поиск в базе знаний"""
     def __init__(self, config):
         print(f"   QdrantRAG.__init__: начало")
         self.config = config
@@ -154,7 +162,6 @@ class QdrantRAG:
 
     @property
     def embedding_model(self):
-        """Ленивая загрузка модели эмбеддингов"""
         if self._embedding_model is None:
             print("   🚀 Ленивая загрузка: инициализация SentenceTransformer...")
             self._embedding_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
@@ -162,7 +169,6 @@ class QdrantRAG:
         return self._embedding_model
 
     async def search_similar(self, diagnosis: str, clinical: str, limit: int = 10) -> List[str]:
-        """Поиск похожих документов в базе знаний"""
         if not self.client:
             return ["Qdrant недоступен - используем общие рекомендации"]
         
@@ -213,7 +219,6 @@ class GigaChatClient:
 
     @property
     def gigachat(self):
-        """Ленивая загрузка GigaChat клиента"""
         if self._gigachat is None and self.config.gigachat_credentials:
             print("   🚀 Ленивая загрузка: инициализация GigaChat...")
             self._gigachat = GigaChat(
@@ -331,7 +336,6 @@ class AppService:
 
     @property
     def rag(self):
-        """Ленивая загрузка RAG компонента"""
         if self._rag is None:
             print("  🚀 Ленивая загрузка: инициализация RAG...")
             self._rag = QdrantRAG(self.config)
@@ -339,7 +343,6 @@ class AppService:
 
     @property
     def gigachat_client(self):
-        """Ленивая загрузка GigaChat клиента"""
         if self._gigachat_client is None:
             print("  🚀 Ленивая загрузка: инициализация GigaChat клиента...")
             self._gigachat_client = GigaChatClient(self.config)
@@ -347,14 +350,12 @@ class AppService:
 
     @property
     def model(self):
-        """Ленивая загрузка нейросетевой модели"""
         if self._model is None:
             print("  🚀 Ленивая загрузка: инициализация нейросети...")
             self._model = self._load_model()
         return self._model
 
     def _load_model(self) -> ProECGNet_SOTA:
-        """Загрузка модели с умным поиском пути"""
         print("=== _load_model: НАЧАЛО ===")
         try:
             model_path = self.config.get_model_path()
@@ -410,7 +411,6 @@ class AppService:
             return model
 
     def _load_ecg_from_file(self, file_content: bytes, filename: str) -> np.ndarray:
-        """Загрузка ЭКГ из bytes"""
         print(f"  _load_ecg_from_file: загрузка {filename}")
         try:
             if filename.endswith('.mat'):
@@ -439,7 +439,6 @@ class AppService:
             raise ValueError(f"Ошибка загрузки ЭКГ: {str(e)}")
 
     def _preprocess_ecg(self, ecg_data: np.ndarray) -> torch.Tensor:
-        """Предобработка ЭКГ"""
         if ecg_data.shape != (12, 5000):
             raise ValueError(f"Ожидается (12, 5000), получено {ecg_data.shape}")
         
@@ -455,19 +454,37 @@ class AppService:
         
         return ecg_tensor.to(self.config.device)
 
-    def _classify_ecg(self, ecg_tensor: torch.Tensor) -> Tuple[str, float]:
-        """Классификация ЭКГ"""
+    def _classify_ecg(self, ecg_tensor: torch.Tensor) -> Tuple[str, float, List[Tuple[str, float]]]:
+        """
+        Классификация ЭКГ с возвратом:
+        - диагноз с максимальной вероятностью
+        - уверенность
+        - топ-3 диагноза с вероятностями
+        """
         print("  _classify_ecg: начало классификации")
         self.model.eval()
         with torch.no_grad():
             output = self.model(ecg_tensor)
             probabilities = F.softmax(output, dim=1)
             confidence, predicted_idx = torch.max(probabilities, 1)
+            
+            # Получаем топ-3 диагноза с вероятностями
+            top3_probs, top3_indices = torch.topk(probabilities, k=3, dim=1)
+            
+            # Формируем список топ-3 диагнозов
+            top3_predictions = []
+            for i in range(3):
+                class_name = CLASS_NAMES[top3_indices[0][i].item()]
+                prob = top3_probs[0][i].item()
+                top3_predictions.append((class_name, prob))
         
         diagnosis = CLASS_NAMES[predicted_idx.item()]
         confidence = confidence.item()
+        
         print(f"  🎯 Диагноз: {diagnosis} (confidence: {confidence:.3f})")
-        return diagnosis, confidence
+        print(f"  📊 Топ-3: {top3_predictions}")
+        
+        return diagnosis, confidence, top3_predictions
 
     async def process_ecg(self, ecg_file_content: bytes, filename: str, clinical_notes: str) -> Dict[str, Any]:
         """Анализ ЭКГ с файлом"""
@@ -477,12 +494,29 @@ class AppService:
             processed_ecg = self._preprocess_ecg(ecg_data)
             print(f"  🔧 После предобработки: форма {processed_ecg.shape}")
             
-            diagnosis, confidence = self._classify_ecg(processed_ecg)
+            diagnosis, confidence, top3_predictions = self._classify_ecg(processed_ecg)
+            
+            # Формируем текст с альтернативными диагнозами для GigaChat
+            top3_text = ", ".join([f"{cls} ({prob:.1%})" for cls, prob in top3_predictions])
+            
             rag_results = await self.rag.search_similar(diagnosis, clinical_notes)
             
+            # Передаём в GigaChat расширенную информацию
             tasks = [
-                self.gigachat_client.chat_with_rag(diagnosis, clinical_notes, confidence, rag_results, "structured"),
-                self.gigachat_client.chat_with_rag(diagnosis, clinical_notes, confidence, rag_results, "full_cot")
+                self.gigachat_client.chat_with_rag(
+                    diagnosis=diagnosis, 
+                    clinical=f"{clinical_notes}\n\nВозможные альтернативные диагнозы: {top3_text}", 
+                    confidence=confidence, 
+                    rag_context=rag_results, 
+                    response_format="structured"
+                ),
+                self.gigachat_client.chat_with_rag(
+                    diagnosis=diagnosis, 
+                    clinical=f"{clinical_notes}\n\nВозможные альтернативные диагнозы: {top3_text}", 
+                    confidence=confidence, 
+                    rag_context=rag_results, 
+                    response_format="full_cot"
+                )
             ]
             structured, full_cot = await asyncio.gather(*tasks)
             
@@ -490,6 +524,7 @@ class AppService:
                 "success": True,
                 "diagnosis": diagnosis,
                 "confidence": confidence,
+                "top3_predictions": top3_predictions,
                 "rag_references": rag_results,
                 "structured_recommendation": structured,
                 "full_cot_recommendation": full_cot,
