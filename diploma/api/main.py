@@ -5,9 +5,8 @@ from pathlib import Path
 print("=== main.py: НАЧАЛО ЗАГРУЗКИ ===")
 print(f"1. Текущая директория: {Path.cwd()}")
 print(f"2. Путь к файлу: {Path(__file__)}")
-print(f"3. Родительская директория (для sys.path): {Path(__file__).parent.parent}")
+print(f"3. Родительская директория: {Path(__file__).parent.parent}")
 
-# Добавляем путь для импорта backend
 sys.path.append(str(Path(__file__).parent.parent))
 print(f"4. sys.path после добавления: {sys.path}")
 
@@ -36,7 +35,7 @@ app = FastAPI(
     version="2.0", 
     root_path="/"
 )
-print("11. ✅ FastAPI приложение создано")
+print("11. ✅ FastAPI приложение создан")
 
 service = None
 print("12. Переменная service инициализирована как None")
@@ -128,6 +127,7 @@ async def analyze_ecg(
             "success": True,
             "diagnosis": result["diagnosis"],
             "confidence": result["confidence"],
+            "top3_predictions": result.get("top3_predictions", []),
             "structured_recommendation": result["structured_recommendation"],
             "full_cot_recommendation": result["full_cot_recommendation"],
             "rag_references": result["rag_references"],
