@@ -19,7 +19,6 @@ import scipy.io as sio
 import io
 import pandas as pd
 from dataclasses import dataclass
-from pathlib import Path
 from dotenv import load_dotenv
 import os
 import datetime
@@ -361,7 +360,7 @@ class GigaChatClient:
         sources_text = ""
         if rag_documents:
             sources_text = "\n\n📚 АКТУАЛЬНЫЕ ИСТОЧНИКИ ИЗ БАЗЫ ЗНАНИЙ:\n"
-            for i, doc in enumerate(rag_documents[:3], 1):
+            for i, doc in enumerate(rag_documents[:5], 1):
                 sources_text += f"\n{i}. **{doc.get('title', 'Источник')}** (релевантность: {doc.get('relevance', 0):.1%})\n"
                 sources_text += f"   {doc.get('content', '')[:400]}...\n"
         
@@ -369,7 +368,7 @@ class GigaChatClient:
 
 ДИАГНОЗ: {diagnosis}
 ДОСТОВЕРНОСТЬ ДИАГНОЗА: {confidence:.1%}
-КЛИНИЧЕСКАЯ ИНФОРМАЦИЯ: {clinical_info}
+КЛИНИЧЕСКАЯ ИНФОРМАЦИЯ: {clinical_info[:500]}
 {sources_text}
 
 ВОПРОС ПОЛЬЗОВАТЕЛЯ: {message}
@@ -386,7 +385,12 @@ class GigaChatClient:
                 for chunk in resp:
                     delta = chunk.choices[0].delta.content or ""
                     chunks.append(delta)
-                return "".join(chunks).strip(), rag_documents, (sum(d.get('relevance', 0) for d in rag_documents) / len(rag_documents) if rag_documents else 0)
+                response = "".join(chunks).strip()
+                
+                # Вычисляем среднюю релевантность использованных источников
+                avg_relevance = sum(d.get('relevance', 0) for d in rag_documents) / len(rag_documents) if rag_documents else 0
+                
+                return response, rag_documents, avg_relevance
             except Exception as e:
                 print(f"   Chat retry {attempt+1}: {e}")
                 await asyncio.sleep(2 ** attempt)
@@ -680,7 +684,6 @@ class AppService:
                     title = lines[0].replace('**', '') if lines else "Источник"
                     # Извлекаем релевантность из строки
                     relevance = 0.5
-                    import re
                     match = re.search(r'релевантность:\s*([\d.]+)', source)
                     if match:
                         relevance = float(match.group(1))
@@ -766,7 +769,7 @@ class AppService:
     
     # ========== НОВАЯ ФУНКЦИЯ ДЛЯ ЧАТА ==========
     async def chat_with_assistant(self, message: str, diagnosis: str, confidence: float,
-                                   clinical_info: str, previous_rag_context: List = None) -> Dict[str, Any]:
+                                   clinical_info: str, previous_rag_context: Dict = None) -> Dict[str, Any]:
         """
         Чат с AI ассистентом с поиском в RAG по вопросу пользователя
         """
@@ -782,17 +785,36 @@ class AppService:
 Вопрос пользователя: {message}
 """
             
-            # Ищем релевантные документы в базе знаний по вопросу
+            # Ищем НОВЫЕ релевантные документы в базе знаний по вопросу
             rag_documents, rag_confidence = await self.rag.search_for_chat(search_query, limit=5)
-            print(f"  📚 Найдено документов для ответа: {len(rag_documents)}")
+            print(f"  📚 Найдено НОВЫХ документов для ответа: {len(rag_documents)}")
             
-            # Получаем ответ от GigaChat с найденными источниками
+            # Объединяем предыдущие источники (из анализа) с новыми
+            all_sources = []
+            
+            # Добавляем предыдущие источники (если есть)
+            if previous_rag_context and isinstance(previous_rag_context, dict):
+                prev_refs = previous_rag_context.get('references', [])
+                for ref in prev_refs[:2]:  # Берём топ-2 из предыдущих
+                    if isinstance(ref, dict):
+                        all_sources.append(ref)
+                    elif isinstance(ref, str):
+                        all_sources.append({
+                            'title': 'Предыдущий анализ',
+                            'content': ref[:300],
+                            'relevance': previous_rag_context.get('confidence', 0.5)
+                        })
+            
+            # Добавляем новые источники
+            all_sources.extend(rag_documents)
+            
+            # Получаем ответ от GigaChat с объединёнными источниками
             answer, used_sources, final_confidence = await self.gigachat_client.chat_answer(
                 message=message,
                 diagnosis=diagnosis,
                 confidence=confidence,
                 clinical_info=clinical_info,
-                rag_documents=rag_documents
+                rag_documents=all_sources
             )
             
             print(f"  ✅ Ответ получен, использовано источников: {len(used_sources)}")
@@ -800,7 +822,7 @@ class AppService:
             return {
                 "success": True,
                 "response": answer,
-                "rag_references": used_sources,
+                "rag_references": used_sources,  # Возвращаем НОВЫЕ источники
                 "rag_confidence": final_confidence
             }
             
