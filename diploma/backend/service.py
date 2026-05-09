@@ -1,4 +1,4 @@
-# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С ДЕДУПЛИКАЦИЕЙ RAG
+# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С ДЕДУПЛИКАЦИЕЙ RAG И ЧАТОМ
 
 print("=== backend/service.py: НАЧАЛО ЗАГРУЗКИ ===")
 print("1. Импортируем базовые модули...")
@@ -167,10 +167,7 @@ class QdrantRAG:
         return self._embedding_model
 
     async def search_similar(self, diagnosis: str, clinical: str, limit: int = 10) -> Tuple[List[str], float]:
-        """
-        Поиск похожих документов в базе знаний
-        Возвращает: (список источников, средняя уверенность RAG)
-        """
+        """Поиск похожих документов в базе знаний"""
         if not self.client:
             return ["Qdrant недоступен - используем общие рекомендации"], 0.0
         
@@ -209,6 +206,8 @@ class QdrantRAG:
                     formatted = f"**{title}** (релевантность: {score:.2f})\n{text[:500]}..."
                     unique_by_content[content_key] = {
                         'formatted': formatted,
+                        'title': title,
+                        'content': text,
                         'score': score
                     }
             
@@ -231,6 +230,63 @@ class QdrantRAG:
         except Exception as e:
             print(f"   Qdrant search error: {e}")
             return ["Ошибка поиска в базе знаний. Используем общие рекомендации."], 0.0
+    
+    async def search_for_chat(self, query: str, limit: int = 5) -> Tuple[List[Dict], float]:
+        """Специальный поиск для чата - возвращает структурированные документы"""
+        if not self.client:
+            return [], 0.0
+        
+        print(f"   🔍 Чат-поиск в базе знаний: {query[:100]}...")
+        
+        all_scores = []
+        
+        try:
+            query_vec = self.embedding_model.encode(query).tolist()
+            
+            hits = self.client.query_points(
+                collection_name=self.config.qdrant_collection,
+                query=query_vec,
+                limit=limit * 2,
+                score_threshold=0.65
+            )
+            
+            # Дедупликация по тексту
+            unique_by_content = {}
+            
+            for hit in hits.points:
+                title = hit.payload.get('title', 'Документ без названия')
+                text = hit.payload.get('text', '')
+                score = hit.score
+                
+                all_scores.append(score)
+                
+                content_key = text[:150].strip().lower()
+                
+                if content_key not in unique_by_content or score > unique_by_content[content_key]['score']:
+                    unique_by_content[content_key] = {
+                        'title': title,
+                        'content': text,
+                        'relevance': score,
+                        'source': hit.payload.get('source', 'База знаний')
+                    }
+            
+            if not unique_by_content:
+                return [], 0.0
+            
+            sorted_results = sorted(
+                unique_by_content.values(), 
+                key=lambda x: x['relevance'], 
+                reverse=True
+            )[:limit]
+            
+            avg_relevance = sum(all_scores) / len(all_scores) if all_scores else 0.0
+            print(f"   📊 Для чата найдено уникальных источников: {len(sorted_results)}")
+            
+            return sorted_results, avg_relevance
+            
+        except Exception as e:
+            print(f"   Чат-поиск error: {e}")
+            return [], 0.0
 
 print("16. ✅ Класс QdrantRAG определён")
 
@@ -291,6 +347,51 @@ class GigaChatClient:
                 print(f"   GigaChat retry {attempt+1}: {e}")
                 await asyncio.sleep(2 ** attempt)
         return "🚨 GIGA OFFLINE: АСА 160мг + ЭКГ повтор + кардиолог ОЧНО"
+    
+    async def chat_answer(self, message: str, diagnosis: str, confidence: float, 
+                          clinical_info: str, rag_documents: List[Dict]) -> Tuple[str, List[Dict], float]:
+        """
+        Ответ на вопрос пользователя с использованием RAG
+        Возвращает: (ответ, использованные источники, уверенность RAG)
+        """
+        if not self.gigachat:
+            return "🚨 GigaChat недоступен", [], 0.0
+        
+        # Форматируем источники для промпта
+        sources_text = ""
+        if rag_documents:
+            sources_text = "\n\n📚 АКТУАЛЬНЫЕ ИСТОЧНИКИ ИЗ БАЗЫ ЗНАНИЙ:\n"
+            for i, doc in enumerate(rag_documents[:3], 1):
+                sources_text += f"\n{i}. **{doc.get('title', 'Источник')}** (релевантность: {doc.get('relevance', 0):.1%})\n"
+                sources_text += f"   {doc.get('content', '')[:400]}...\n"
+        
+        prompt = f"""Ты - AI кардиологический ассистент. Отвечай на вопросы пользователя профессионально и по существу.
+
+ДИАГНОЗ: {diagnosis}
+ДОСТОВЕРНОСТЬ ДИАГНОЗА: {confidence:.1%}
+КЛИНИЧЕСКАЯ ИНФОРМАЦИЯ: {clinical_info}
+{sources_text}
+
+ВОПРОС ПОЛЬЗОВАТЕЛЯ: {message}
+
+ОТВЕТЬ НА РУССКОМ ЯЗЫКЕ, подробно и профессионально.
+Если в источниках есть релевантная информация, обязательно используй её и ссылайся на источники.
+Если точного ответа нет, дай общие рекомендации и предложи обратиться к врачу.
+Будь полезным, но не давай опасных советов - всегда рекомендуй консультацию с врачом при необходимости."""
+        
+        for attempt in range(3):
+            try:
+                chunks = []
+                resp = self.gigachat.stream(Chat(messages=[{"role": "user", "content": prompt}]))
+                for chunk in resp:
+                    delta = chunk.choices[0].delta.content or ""
+                    chunks.append(delta)
+                return "".join(chunks).strip(), rag_documents, (sum(d.get('relevance', 0) for d in rag_documents) / len(rag_documents) if rag_documents else 0)
+            except Exception as e:
+                print(f"   Chat retry {attempt+1}: {e}")
+                await asyncio.sleep(2 ** attempt)
+        
+        return "🚨 Сервис временно недоступен. Пожалуйста, попробуйте позже.", [], 0.0
 
 print("18. ✅ Класс GigaChatClient определён")
 
@@ -577,14 +678,22 @@ class AppService:
                 if "**" in source:
                     lines = source.split('\n')
                     title = lines[0].replace('**', '') if lines else "Источник"
+                    # Извлекаем релевантность из строки
+                    relevance = 0.5
+                    import re
+                    match = re.search(r'релевантность:\s*([\d.]+)', source)
+                    if match:
+                        relevance = float(match.group(1))
                     content = '\n'.join(lines[1:]) if len(lines) > 1 else source
                 else:
                     title = f"Источник {i}"
                     content = source[:300] + "..." if len(source) > 300 else source
+                    relevance = 0.5
                 
                 formatted_sources.append({
                     "title": title,
                     "content": content,
+                    "relevance": relevance,
                     "full_text": source
                 })
             
@@ -592,7 +701,7 @@ class AppService:
             if formatted_sources:
                 sources_section = "\n\n### 📚 Источники из базы знаний\n\n"
                 for i, source in enumerate(formatted_sources, 1):
-                    sources_section += f"**{i}. {source['title']}**\n"
+                    sources_section += f"**{i}. {source['title']}** (релевантность: {source['relevance']:.1%})\n"
                     sources_section += f"{source['content'][:200]}...\n\n"
             
             structured_rec = f"""### 📋 Оценка симптомов
@@ -653,6 +762,59 @@ class AppService:
                 "recommended_actions": ["ЭКГ", "Консультация кардиолога", "Общий анализ крови"],
                 "requires_ecg": True,
                 "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    # ========== НОВАЯ ФУНКЦИЯ ДЛЯ ЧАТА ==========
+    async def chat_with_assistant(self, message: str, diagnosis: str, confidence: float,
+                                   clinical_info: str, previous_rag_context: List = None) -> Dict[str, Any]:
+        """
+        Чат с AI ассистентом с поиском в RAG по вопросу пользователя
+        """
+        print(f"=== chat_with_assistant: начало ===")
+        print(f"  💬 Вопрос: {message[:100]}...")
+        print(f"  🩺 Диагноз: {diagnosis}, достоверность: {confidence:.1%}")
+        
+        try:
+            # Формируем поисковый запрос на основе вопроса пользователя и контекста
+            search_query = f"""
+Диагноз: {diagnosis}
+Клиническая информация: {clinical_info[:300]}
+Вопрос пользователя: {message}
+"""
+            
+            # Ищем релевантные документы в базе знаний по вопросу
+            rag_documents, rag_confidence = await self.rag.search_for_chat(search_query, limit=5)
+            print(f"  📚 Найдено документов для ответа: {len(rag_documents)}")
+            
+            # Получаем ответ от GigaChat с найденными источниками
+            answer, used_sources, final_confidence = await self.gigachat_client.chat_answer(
+                message=message,
+                diagnosis=diagnosis,
+                confidence=confidence,
+                clinical_info=clinical_info,
+                rag_documents=rag_documents
+            )
+            
+            print(f"  ✅ Ответ получен, использовано источников: {len(used_sources)}")
+            
+            return {
+                "success": True,
+                "response": answer,
+                "rag_references": used_sources,
+                "rag_confidence": final_confidence
+            }
+            
+        except Exception as e:
+            print(f"  ❌ Ошибка чата: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            return {
+                "success": False,
+                "response": "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте позже.",
+                "rag_references": [],
+                "rag_confidence": 0.0,
+                "error": str(e)
             }
 
 print("22. ✅ Класс AppService определён")
