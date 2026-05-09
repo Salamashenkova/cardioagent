@@ -81,6 +81,14 @@ st.markdown("""
         text-align: center;
         margin: 0.5rem;
     }
+    .chat-source {
+        background: #f0f2f6;
+        padding: 0.8rem;
+        border-left: 3px solid #667eea;
+        border-radius: 5px;
+        margin: 0.5rem 0;
+        font-size: 0.85rem;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -107,25 +115,6 @@ def analyze_ecg(file, clinical_info):
             response = requests.post(f"{API_URL}/analyze_ecg", files=files, data=data, timeout=60)
             if response.status_code == 200:
                 result = response.json()
-                # Добавляем в результат структурированные документы, если они есть
-                if result.get('success') and result.get('rag_references'):
-                    # Пытаемся преобразовать rag_references в структурированный формат
-                    if isinstance(result.get('rag_references'), list):
-                        # Если это список словарей
-                        if result.get('rag_references') and isinstance(result['rag_references'][0], dict):
-                            result['rag_documents'] = result['rag_references']
-                        else:
-                            # Если это список строк, создаем структуру
-                            result['rag_documents'] = [
-                                {
-                                    'title': f'Источник {i+1}',
-                                    'content': ref,
-                                    'relevance': result.get('rag_confidence', 0.5)
-                                }
-                                for i, ref in enumerate(result.get('rag_references', []))
-                            ]
-                    else:
-                        result['rag_documents'] = []
                 return result
             else:
                 st.error(f"Ошибка API: {response.status_code} - {response.text}")
@@ -140,30 +129,7 @@ def analyze_clinical_only(clinical_info):
         try:
             response = requests.post(f"{API_URL}/analyze_clinical", data=data, timeout=60)
             if response.status_code == 200:
-                result = response.json()
-                # Добавляем в результат структурированные документы, если они есть
-                if result.get('success') and result.get('formatted_sources'):
-                    result['rag_documents'] = result.get('formatted_sources', [])
-                    # Добавляем релевантность для каждого документа, если её нет
-                    for doc in result['rag_documents']:
-                        if 'relevance' not in doc:
-                            doc['relevance'] = result.get('rag_confidence', 0.5)
-                elif result.get('success') and result.get('rag_references'):
-                    if isinstance(result.get('rag_references'), list):
-                        if result['rag_references'] and isinstance(result['rag_references'][0], dict):
-                            result['rag_documents'] = result['rag_references']
-                        else:
-                            result['rag_documents'] = [
-                                {
-                                    'title': f'Источник {i+1}',
-                                    'content': ref,
-                                    'relevance': result.get('rag_confidence', 0.5)
-                                }
-                                for i, ref in enumerate(result.get('rag_references', []))
-                            ]
-                    else:
-                        result['rag_documents'] = []
-                return result
+                return response.json()
             else:
                 st.error(f"Ошибка API: {response.status_code} - {response.text}")
                 return None
@@ -173,8 +139,8 @@ def analyze_clinical_only(clinical_info):
 
 def chat_with_bot(message, diagnosis, confidence, clinical_info, rag_context):
     with st.spinner("🤔 Думаю..."):
-        # Преобразуем rag_context в строку для отправки
-        rag_context_str = json.dumps(rag_context, ensure_ascii=False) if isinstance(rag_context, dict) else str(rag_context)
+        # Преобразуем rag_context в JSON строку
+        rag_context_str = json.dumps(rag_context, ensure_ascii=False) if rag_context else "[]"
         
         data = {
             "message": message,
@@ -212,7 +178,7 @@ if api_status:
         if len(classes) > 8:
             st.sidebar.markdown(f"... и {len(classes) - 8} других")
 else:
-    st.sidebar.error(f"❌ API не доступен! URL: {API_URL}\n\nУбедитесь, что бэкенд развернут и переменная API_URL настроена правильно.")
+    st.sidebar.error(f"❌ API не доступен! URL: {API_URL}")
 
 st.markdown("""
 <div class="main-header">
@@ -263,7 +229,6 @@ with tab1:
                     'confidence': result['confidence'],
                     'clinical_info': clinical_info,
                     'rag_refs': result.get('rag_references', []),
-                    'rag_documents': result.get('rag_documents', []),
                     'rag_confidence': result.get('rag_confidence', 0.0)
                 }
                 
@@ -285,7 +250,6 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Блок отображения уверенности RAG
                 if result.get('rag_confidence'):
                     st.metric(
                         label="📚 Уверенность поиска в базе знаний",
@@ -293,7 +257,6 @@ with tab1:
                         help="Средняя релевантность найденных источников"
                     )
                 
-                # Отображение топ-3 диагнозов
                 if result.get('top3_predictions'):
                     st.subheader("📊 Все возможные диагнозы")
                     cols = st.columns(3)
@@ -305,13 +268,11 @@ with tab1:
                                 delta=None
                             )
                     
-                    # Визуализация распределения вероятностей
                     st.subheader("📈 Распределение вероятностей")
                     prob_data = []
                     for diag, prob in result['top3_predictions']:
                         prob_data.append({"Диагноз": diag, "Вероятность": prob})
                     
-                    # Добавляем остальные классы с вероятностью 0
                     all_classes = ["NORM", "MI", "STTC", "CD", "HYP"]
                     existing = [p[0] for p in result['top3_predictions']]
                     for cls in all_classes:
@@ -378,7 +339,6 @@ with tab2:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Блок отображения уверенности RAG для клинического анализа
                 if result.get('rag_confidence'):
                     st.metric(
                         label="📚 Уверенность поиска в базе знаний",
@@ -412,11 +372,10 @@ with tab2:
                 
                 if result.get('requires_ecg', True):
                     st.session_state.last_diagnosis = {
-                        'diagnosis': "Требуется ЭКГ",
-                        'confidence': 0.0,
+                        'diagnosis': result.get('diagnosis', "Требуется ЭКГ"),
+                        'confidence': result.get('confidence', 0.0),
                         'clinical_info': clinical_only,
                         'rag_refs': result.get('rag_references', []),
-                        'rag_documents': result.get('rag_documents', []),
                         'rag_confidence': result.get('rag_confidence', 0.0)
                     }
         else:
@@ -434,123 +393,75 @@ with tab3:
                 st.metric("Диагноз", st.session_state.last_diagnosis['diagnosis'])
                 st.metric("Достоверность", f"{st.session_state.last_diagnosis['confidence']:.1%}")
             with col2:
-                st.metric("Источников в RAG", len(st.session_state.last_diagnosis.get('rag_refs', [])))
+                total_sources = len(st.session_state.last_diagnosis.get('rag_refs', []))
+                st.metric("Источников в RAG", total_sources)
             with col3:
-                # Отображение общей уверенности RAG из последнего диагноза
                 rag_conf = st.session_state.last_diagnosis.get('rag_confidence', 0)
                 if rag_conf > 0:
                     st.metric(
                         "📚 Общая релевантность RAG",
                         f"{rag_conf:.1%}",
-                        help="Средняя релевантность всех найденных источников"
+                        help="Средняя релевантность найденных источников"
                     )
                 else:
-                    st.metric("📚 RAG доступен", "✅ Да" if st.session_state.last_diagnosis.get('rag_refs') else "⚠️ Нет")
+                    st.metric("📚 RAG доступен", "✅ Да" if total_sources > 0 else "⚠️ Нет")
             st.markdown("**Клиническая информация:**")
             st.info(st.session_state.last_diagnosis['clinical_info'][:200] + "...")
         
-        # Блок отображения наиболее релевантных документов из RAG
-        if st.session_state.last_diagnosis.get('rag_documents') or st.session_state.last_diagnosis.get('rag_refs'):
-            st.markdown("---")
-            st.subheader("📚 Наиболее релевантные источники из базы знаний")
-            st.caption("Документы, найденные при последнем анализе с указанием степени релевантности")
-            
-            # Получаем документы с релевантностью
-            rag_docs = st.session_state.last_diagnosis.get('rag_documents', [])
-            
-            # Если есть структурированные документы с релевантностью
-            if rag_docs and isinstance(rag_docs, list) and len(rag_docs) > 0:
-                # Создаем DataFrame для визуализации
-                docs_data = []
-                for i, doc in enumerate(rag_docs[:5], 1):
-                    title = doc.get('title', f'Источник {i}')
-                    relevance = doc.get('relevance', doc.get('score', 0))
-                    content_preview = doc.get('content', doc.get('text', ''))[:200]
-                    
-                    docs_data.append({
-                        "№": i,
-                        "Релевантность": relevance,
-                        "Источник": title
-                    })
-                    
-                    # Определяем цвет в зависимости от релевантности
-                    if relevance > 0.8:
-                        border_color = "#4facfe"
-                        emoji = "🟢"
-                    elif relevance > 0.6:
-                        border_color = "#f6d365"
-                        emoji = "🟡"
-                    else:
-                        border_color = "#fa709a"
-                        emoji = "🔴"
-                    
-                    st.markdown(f"""
-                    <div style="
-                        background: #f8f9fa;
-                        padding: 1rem;
-                        border-left: 4px solid {border_color};
-                        border-radius: 8px;
-                        margin: 0.8rem 0;
-                    ">
-                        <b>{emoji} Источник #{i}: {title}</b><br/>
-                        <span style="color: #666; font-size: 0.9em;">
-                            📊 Релевантность: <b>{relevance:.1%}</b>
-                        </span><br/>
-                        <span style="color: #888; font-size: 0.85em;">
-                            {content_preview}...
-                        </span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                # Визуализация релевантности документов
-                if docs_data:
-                    st.markdown("#### 📊 График релевантности документов")
-                    df_docs = pd.DataFrame(docs_data)
-                    st.bar_chart(df_docs.set_index("№")["Релевантность"])
-                    
-                    # Общая статистика
-                    avg_relevance = np.mean([d["Релевантность"] for d in docs_data])
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric(
-                            "📈 Средняя релевантность топ-документов",
-                            f"{avg_relevance:.1%}",
-                            help="Средняя релевантность наиболее релевантных источников"
-                        )
-                    with col2:
-                        best_match = max(docs_data, key=lambda x: x["Релевантность"])
-                        st.metric(
-                            "🏆 Наиболее релевантный источник",
-                            best_match["Источник"][:30],
-                            f"{best_match['Релевантность']:.1%}"
-                        )
-            
-            # Если есть только текстовые референсы (без структурированной релевантности)
-            elif st.session_state.last_diagnosis.get('rag_refs'):
-                st.info("📖 Найдены следующие источники (информация о релевантности отсутствует):")
-                for i, ref in enumerate(st.session_state.last_diagnosis['rag_refs'][:3], 1):
-                    with st.expander(f"📖 Источник {i}"):
-                        st.markdown(ref[:500] + ("..." if len(ref) > 500 else ""))
-            
-            st.markdown("---")
-        
+        st.markdown("---")
     else:
         st.info("ℹ️ Сначала выполните анализ ЭКГ или клинический анализ, чтобы получить контекст для чата")
     
-    st.markdown("---")
-    
+    # История чата
     chat_container = st.container()
     with chat_container:
         if not st.session_state.chat_history:
             st.info("💬 Задайте вопрос AI ассистенту о диагнозе или лечении")
         else:
-            for msg in st.session_state.chat_history:
+            for msg_idx, msg in enumerate(st.session_state.chat_history):
                 if msg['role'] == 'user':
                     st.markdown(f"**👤 Вы:** {msg['content']}")
                 else:
                     st.markdown(f"**🤖 AI Ассистент:** {msg['content']}")
+                    
+                    # Отображаем источники для ответа ассистента
+                    if msg.get('rag_references') and len(msg.get('rag_references', [])) > 0:
+                        rag_conf = msg.get('rag_confidence', 0)
+                        with st.expander(f"📚 Источники для этого ответа (релевантность: {rag_conf:.1%})", expanded=False):
+                            for i, ref in enumerate(msg['rag_references'][:3], 1):
+                                # Парсим строку источника, если нужно
+                                if isinstance(ref, str):
+                                    # Извлекаем заголовок и релевантность из строки
+                                    import re
+                                    title_match = re.search(r'\*\*(.+?)\*\*', ref)
+                                    title = title_match.group(1) if title_match else f"Источник {i}"
+                                    
+                                    relevance_match = re.search(r'релевантность:\s*([\d.]+)', ref)
+                                    relevance = float(relevance_match.group(1)) if relevance_match else 0.5
+                                    
+                                    content_match = re.search(r'\n(.+?)(?:\n|$)', ref)
+                                    content = content_match.group(1) if content_match else ref[:200]
+                                    
+                                    st.markdown(f"""
+                                    <div class="chat-source">
+                                        <b>{i}. {title}</b>
+                                        <span style="color: #666;">(релевантность: {relevance:.1%})</span><br/>
+                                        <span style="color: #555;">{content[:200]}...</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                elif isinstance(ref, dict):
+                                    st.markdown(f"""
+                                    <div class="chat-source">
+                                        <b>{i}. {ref.get('title', 'Источник')}</b>
+                                        <span style="color: #666;">(релевантность: {ref.get('relevance', 0):.1%})</span><br/>
+                                        <span style="color: #555;">{ref.get('content', '')[:200]}...</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                else:
+                                    st.markdown(f"**{i}.** {str(ref)[:200]}...")
                 st.markdown("---")
     
+    # Ввод вопроса
     col1, col2 = st.columns([4, 1])
     with col1:
         user_message = st.text_input(
@@ -571,26 +482,40 @@ with tab3:
         confidence = st.session_state.last_diagnosis.get('confidence', 0.0)
         clinical_info = st.session_state.last_diagnosis.get('clinical_info', '')
         rag_refs = st.session_state.last_diagnosis.get('rag_refs', [])
-        rag_docs = st.session_state.last_diagnosis.get('rag_documents', [])
         rag_confidence = st.session_state.last_diagnosis.get('rag_confidence', 0.0)
         
-        # Передаем в чат полный RAG контекст
+        # Подготавливаем контекст для чата
         rag_context = {
             'references': rag_refs,
-            'documents': rag_docs,
             'confidence': rag_confidence
         }
         
+        # Добавляем сообщение пользователя в историю
         st.session_state.chat_history.append({'role': 'user', 'content': user_message})
         
+        # Получаем ответ от API
         response = chat_with_bot(user_message, diagnosis, confidence, clinical_info, rag_context)
         
         if response and response.get('success'):
-            bot_response = response['response']
-            st.session_state.chat_history.append({'role': 'assistant', 'content': bot_response})
+            bot_response = response.get('response', '')
+            rag_references = response.get('rag_references', [])
+            rag_conf = response.get('rag_confidence', 0.0)
+            
+            # Добавляем ответ ассистента в историю с источниками
+            st.session_state.chat_history.append({
+                'role': 'assistant',
+                'content': bot_response,
+                'rag_references': rag_references,
+                'rag_confidence': rag_conf
+            })
             st.rerun()
+        elif response and not response.get('success'):
+            st.error(f"❌ Ошибка: {response.get('error', 'Неизвестная ошибка')}")
+            # Удаляем сообщение пользователя при ошибке
+            st.session_state.chat_history.pop()
         else:
             st.error("❌ Ошибка при получении ответа от ассистента")
+            st.session_state.chat_history.pop()
 
 # TAB 4: О системе
 with tab4:
@@ -628,7 +553,7 @@ with tab4:
     
     #### 💡 Особенности:
     - Клинический анализ использует RAG для поиска похожих случаев
-    - AI ассистент учитывает контекст последнего анализа
+    - AI ассистент ищет источники по каждому вопросу пользователя
     - Все рекомендации основаны на клинических источниках
     """)
     
