@@ -35,7 +35,7 @@ app = FastAPI(
     version="2.0", 
     root_path="/"
 )
-print("11. ✅ FastAPI приложение создан")
+print("11. ✅ FastAPI приложение создано")
 
 service = None
 print("12. Переменная service инициализирована как None")
@@ -127,6 +127,7 @@ async def analyze_ecg(
             "success": True,
             "diagnosis": result["diagnosis"],
             "confidence": result["confidence"],
+            "rag_confidence": result.get("rag_confidence", 0.0),
             "top3_predictions": result.get("top3_predictions", []),
             "structured_recommendation": result["structured_recommendation"],
             "full_cot_recommendation": result["full_cot_recommendation"],
@@ -156,6 +157,7 @@ async def analyze_clinical(clinical_info: str = Form(...)):
             "mode": "clinical_only",
             "diagnosis": result.get("diagnosis", "Требуется ЭКГ для точного диагноза"),
             "confidence": result.get("confidence", 0.0),
+            "rag_confidence": result.get("rag_confidence", 0.0),
             "clinical_info": clinical_info,
             "structured_recommendation": result.get("structured_recommendation", ""),
             "rag_references": result.get("rag_references", []),
