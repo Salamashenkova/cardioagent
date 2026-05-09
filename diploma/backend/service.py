@@ -1,4 +1,4 @@
-# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С РАСШИРЕННЫМ ВЫВОДОМ УВЕРЕННОСТИ
+# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С ДЕДУПЛИКАЦИЕЙ RAG
 
 print("=== backend/service.py: НАЧАЛО ЗАГРУЗКИ ===")
 print("1. Импортируем базовые модули...")
@@ -58,14 +58,12 @@ class Config:
     verify_ssl: bool = os.getenv("VERIFY_SSL", "false").lower() == "true"
     
     def __post_init__(self):
-        """Проверка наличия необходимых переменных"""
         if not self.qdrant_url or not self.qdrant_api_key:
             print("⚠️ ВНИМАНИЕ: Qdrant не настроен! Добавьте переменные QDRANT_URL и QDRANT_API_KEY в окружение.")
         if not self.gigachat_credentials:
             print("⚠️ ВНИМАНИЕ: GigaChat не настроен! Добавьте переменную GIGACHAT_CREDENTIALS в окружение.")
     
     def get_model_path(self):
-        """Умный поиск пути к модели с пробой разных вариантов"""
         print(f"   get_model_path: ищем модель...")
         if self.model_path.exists():
             print(f"   ✅ Модель найдена по пути: {self.model_path}")
@@ -168,9 +166,13 @@ class QdrantRAG:
             print("   ✅ SentenceTransformer загружен")
         return self._embedding_model
 
-    async def search_similar(self, diagnosis: str, clinical: str, limit: int = 10) -> List[str]:
+    async def search_similar(self, diagnosis: str, clinical: str, limit: int = 10) -> Tuple[List[str], float]:
+        """
+        Поиск похожих документов в базе знаний
+        Возвращает: (список источников, средняя уверенность RAG)
+        """
         if not self.client:
-            return ["Qdrant недоступен - используем общие рекомендации"]
+            return ["Qdrant недоступен - используем общие рекомендации"], 0.0
         
         if diagnosis and diagnosis != "Клинический анализ симптомов (без ЭКГ)":
             query_text = f"{diagnosis} {clinical}"
@@ -179,33 +181,56 @@ class QdrantRAG:
         
         print(f"   🔍 Поиск в базе знаний: {query_text[:100]}...")
         
+        all_scores = []
+        
         try:
             query_vec = self.embedding_model.encode(query_text).tolist()
             
             hits = self.client.query_points(
                 collection_name=self.config.qdrant_collection,
                 query=query_vec,
-                limit=limit,
+                limit=limit * 2,
                 score_threshold=0.65
             )
             
-            results = []
+            # Дедупликация по тексту
+            unique_by_content = {}
+            
             for hit in hits.points:
                 title = hit.payload.get('title', 'Документ без названия')
                 text = hit.payload.get('text', '')
                 score = hit.score
                 
-                formatted = f"**{title}** (релевантность: {score:.2f})\n{text[:500]}..."
-                results.append(formatted)
+                all_scores.append(score)
+                
+                content_key = text[:150].strip().lower()
+                
+                if content_key not in unique_by_content or score > unique_by_content[content_key]['score']:
+                    formatted = f"**{title}** (релевантность: {score:.2f})\n{text[:500]}..."
+                    unique_by_content[content_key] = {
+                        'formatted': formatted,
+                        'score': score
+                    }
             
-            if not results:
-                return ["Не найдено релевантных документов в базе знаний"]
+            if not unique_by_content:
+                return ["Не найдено релевантных документов в базе знаний"], 0.0
             
-            return results
+            sorted_results = sorted(
+                unique_by_content.values(), 
+                key=lambda x: x['score'], 
+                reverse=True
+            )[:limit]
+            
+            results = [item['formatted'] for item in sorted_results]
+            
+            avg_rag_confidence = sum(all_scores) / len(all_scores) if all_scores else 0.0
+            print(f"   📊 Найдено уникальных источников: {len(results)}, средняя уверенность RAG: {avg_rag_confidence:.3f}")
+            
+            return results, avg_rag_confidence
             
         except Exception as e:
             print(f"   Qdrant search error: {e}")
-            return ["Ошибка поиска в базе знаний. Используем общие рекомендации."]
+            return ["Ошибка поиска в базе знаний. Используем общие рекомендации."], 0.0
 
 print("16. ✅ Класс QdrantRAG определён")
 
@@ -455,12 +480,6 @@ class AppService:
         return ecg_tensor.to(self.config.device)
 
     def _classify_ecg(self, ecg_tensor: torch.Tensor) -> Tuple[str, float, List[Tuple[str, float]]]:
-        """
-        Классификация ЭКГ с возвратом:
-        - диагноз с максимальной вероятностью
-        - уверенность
-        - топ-3 диагноза с вероятностями
-        """
         print("  _classify_ecg: начало классификации")
         self.model.eval()
         with torch.no_grad():
@@ -468,10 +487,8 @@ class AppService:
             probabilities = F.softmax(output, dim=1)
             confidence, predicted_idx = torch.max(probabilities, 1)
             
-            # Получаем топ-3 диагноза с вероятностями
             top3_probs, top3_indices = torch.topk(probabilities, k=3, dim=1)
             
-            # Формируем список топ-3 диагнозов
             top3_predictions = []
             for i in range(3):
                 class_name = CLASS_NAMES[top3_indices[0][i].item()]
@@ -487,7 +504,6 @@ class AppService:
         return diagnosis, confidence, top3_predictions
 
     async def process_ecg(self, ecg_file_content: bytes, filename: str, clinical_notes: str) -> Dict[str, Any]:
-        """Анализ ЭКГ с файлом"""
         print(f"=== process_ecg: начало, filename={filename} ===")
         try:
             ecg_data = self._load_ecg_from_file(ecg_file_content, filename)
@@ -496,12 +512,11 @@ class AppService:
             
             diagnosis, confidence, top3_predictions = self._classify_ecg(processed_ecg)
             
-            # Формируем текст с альтернативными диагнозами для GigaChat
             top3_text = ", ".join([f"{cls} ({prob:.1%})" for cls, prob in top3_predictions])
             
-            rag_results = await self.rag.search_similar(diagnosis, clinical_notes)
+            rag_results, rag_confidence = await self.rag.search_similar(diagnosis, clinical_notes)
+            print(f"  📊 RAG уверенность: {rag_confidence:.3f}")
             
-            # Передаём в GigaChat расширенную информацию
             tasks = [
                 self.gigachat_client.chat_with_rag(
                     diagnosis=diagnosis, 
@@ -524,6 +539,7 @@ class AppService:
                 "success": True,
                 "diagnosis": diagnosis,
                 "confidence": confidence,
+                "rag_confidence": rag_confidence,
                 "top3_predictions": top3_predictions,
                 "rag_references": rag_results,
                 "structured_recommendation": structured,
@@ -541,12 +557,12 @@ class AppService:
             }
 
     async def analyze_clinical_only(self, clinical_notes: str) -> Dict[str, Any]:
-        """Анализ только клинических симптомов без ЭКГ"""
         print(f"=== analyze_clinical_only: начало ===")
         try:
             print(f"  🩺 Клинический анализ симптомов: {clinical_notes[:100]}...")
             
-            rag_results = await self.rag.search_similar("", clinical_notes)
+            rag_results, rag_confidence = await self.rag.search_similar("", clinical_notes)
+            print(f"  📊 RAG уверенность: {rag_confidence:.3f}")
             
             recommendations = await self.gigachat_client.chat_with_rag(
                 diagnosis="Клинический анализ симптомов (без ЭКГ)",
@@ -603,6 +619,7 @@ class AppService:
                 "success": True,
                 "diagnosis": "Требуется ЭКГ для точного диагноза",
                 "confidence": 0.0,
+                "rag_confidence": rag_confidence,
                 "structured_recommendation": structured_rec,
                 "rag_references": rag_results,
                 "formatted_sources": formatted_sources,
