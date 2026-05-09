@@ -13,9 +13,10 @@ print(f"4. sys.path после добавления: {sys.path}")
 print("5. Импортируем fastapi и другие модули...")
 from fastapi import FastAPI, UploadFile, HTTPException, File, Form
 from starlette.responses import JSONResponse
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uvicorn
+import json
 print("6. ✅ Базовые модули импортированы")
 
 print("7. Импортируем backend.service...")
@@ -177,36 +178,71 @@ print("28. Регистрируем chat эндпоинт...")
 @app.post("/chat")
 async def chat(
     message: str = Form(...),
-    clinical_info: str = Form(""),
     diagnosis: str = Form(""),
     confidence: float = Form(0.0),
-    rag_context: List[str] = Form([])
+    clinical_info: str = Form(""),
+    rag_context: str = Form("[]")  # Изменено на строку, т.к. Form не поддерживает List напрямую
 ):
     print(f"*** ВЫЗВАН chat: message={message[:50] if message else 'empty'}... ***")
+    print(f"    diagnosis={diagnosis}, confidence={confidence}")
+    
     if not service:
         raise HTTPException(503, "Сервис не инициализирован")
     
     try:
-        response = await service.gigachat_client.chat_with_rag(
-            diagnosis=diagnosis or "Неизвестно",
-            clinical=clinical_info or message,
+        # Парсим rag_context из строки
+        try:
+            if rag_context and rag_context != "null" and rag_context != "[]":
+                previous_rag = json.loads(rag_context)
+            else:
+                previous_rag = None
+        except json.JSONDecodeError:
+            print(f"   ⚠️ Ошибка парсинга rag_context: {rag_context[:100]}")
+            previous_rag = None
+        
+        # Используем новый метод чата из service
+        result = await service.chat_with_assistant(
+            message=message,
+            diagnosis=diagnosis if diagnosis else "Неизвестно",
             confidence=confidence,
-            rag_context=rag_context[:3] if rag_context else [],
-            response_format="full_cot"
+            clinical_info=clinical_info,
+            previous_rag_context=previous_rag
         )
         
-        return {
-            "success": True,
-            "message": message,
-            "response": response,
-            "context": {
-                "diagnosis": diagnosis,
-                "confidence": confidence,
-                "clinical_info": clinical_info
+        if result.get("success"):
+            # Форматируем источники для ответа
+            rag_references = []
+            for doc in result.get("rag_references", []):
+                if isinstance(doc, dict):
+                    formatted_ref = f"**{doc.get('title', 'Источник')}** (релевантность: {doc.get('relevance', 0):.1%})\n{doc.get('content', '')[:500]}..."
+                    rag_references.append(formatted_ref)
+                else:
+                    rag_references.append(str(doc))
+            
+            return {
+                "success": True,
+                "response": result.get("response", ""),
+                "rag_references": rag_references,
+                "rag_confidence": result.get("rag_confidence", 0.0),
+                "context": {
+                    "diagnosis": diagnosis,
+                    "confidence": confidence,
+                    "clinical_info": clinical_info[:200] if clinical_info else ""
+                }
             }
-        }
+        else:
+            return {
+                "success": False,
+                "response": result.get("response", "Извините, произошла ошибка"),
+                "rag_references": [],
+                "rag_confidence": 0.0,
+                "error": result.get("error", "Unknown error")
+            }
         
     except Exception as e:
+        print(f"   ❌ Ошибка чата: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(500, f"Ошибка чата: {str(e)}")
 print("29. ✅ chat эндпоинт зарегистрирован")
 
@@ -220,3 +256,5 @@ async def http_exception_handler(request, exc: HTTPException):
 print("31. ✅ Обработчик исключений зарегистрирован")
 
 print("=== main.py: КОНЕЦ ЗАГРУЗКИ ===")
+
+
