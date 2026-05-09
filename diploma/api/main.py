@@ -1,4 +1,3 @@
-# diploma/api/main.py
 import sys
 from pathlib import Path
 
@@ -181,7 +180,7 @@ async def chat(
     diagnosis: str = Form(""),
     confidence: float = Form(0.0),
     clinical_info: str = Form(""),
-    rag_context: str = Form("[]")  # Изменено на строку, т.к. Form не поддерживает List напрямую
+    rag_context: str = Form("{}")
 ):
     print(f"*** ВЫЗВАН chat: message={message[:50] if message else 'empty'}... ***")
     print(f"    diagnosis={diagnosis}, confidence={confidence}")
@@ -192,7 +191,7 @@ async def chat(
     try:
         # Парсим rag_context из строки
         try:
-            if rag_context and rag_context != "null" and rag_context != "[]":
+            if rag_context and rag_context != "null" and rag_context != "{}" and rag_context != "[]":
                 previous_rag = json.loads(rag_context)
             else:
                 previous_rag = None
@@ -200,7 +199,7 @@ async def chat(
             print(f"   ⚠️ Ошибка парсинга rag_context: {rag_context[:100]}")
             previous_rag = None
         
-        # Используем новый метод чата из service
+        # Используем метод чата из service с НОВЫМ поиском
         result = await service.chat_with_assistant(
             message=message,
             diagnosis=diagnosis if diagnosis else "Неизвестно",
@@ -210,19 +209,11 @@ async def chat(
         )
         
         if result.get("success"):
-            # Форматируем источники для ответа
-            rag_references = []
-            for doc in result.get("rag_references", []):
-                if isinstance(doc, dict):
-                    formatted_ref = f"**{doc.get('title', 'Источник')}** (релевантность: {doc.get('relevance', 0):.1%})\n{doc.get('content', '')[:500]}..."
-                    rag_references.append(formatted_ref)
-                else:
-                    rag_references.append(str(doc))
-            
+            # ВОЗВРАЩАЕМ ИСТОЧНИКИ КАК ЕСТЬ (НЕ ПРЕОБРАЗУЕМ В СТРОКИ!)
             return {
                 "success": True,
                 "response": result.get("response", ""),
-                "rag_references": rag_references,
+                "rag_references": result.get("rag_references", []),  # ← Оставляем как список словарей
                 "rag_confidence": result.get("rag_confidence", 0.0),
                 "context": {
                     "diagnosis": diagnosis,
@@ -256,6 +247,5 @@ async def http_exception_handler(request, exc: HTTPException):
 print("31. ✅ Обработчик исключений зарегистрирован")
 
 print("=== main.py: КОНЕЦ ЗАГРУЗКИ ===")
-
 
 
