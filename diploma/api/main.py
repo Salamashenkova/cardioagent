@@ -258,13 +258,3 @@ print("31. ✅ Обработчик исключений зарегистрир�
 print("=== main.py: КОНЕЦ ЗАГРУЗКИ ===")
 
 
-# Добавляем точку входа для запуска
-if __name__ == "__main__":
-    print("🚀 Запуск сервера uvicorn...")
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
