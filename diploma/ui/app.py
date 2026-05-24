@@ -6,6 +6,7 @@ from datetime import datetime
 import numpy as np
 import os
 import re
+from pathlib import Path
 
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 
@@ -93,9 +94,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.session_state.chat_history = st.session_state.get("chat_history", [])
-st.session_state.last_diagnosis = st.session_state.get("last_diagnosis", None)
-st.session_state.backend_memory = st.session_state.get("backend_memory", {"messages": [], "sources": []})
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'last_diagnosis' not in st.session_state:
+    st.session_state.last_diagnosis = None
+if 'backend_memory' not in st.session_state:
+    st.session_state.backend_memory = {"messages": [], "sources": []}
 
 @st.cache_data(ttl=60)
 def check_api_health():
@@ -103,20 +107,21 @@ def check_api_health():
         response = requests.get(f"{API_URL}/health", timeout=5)
         if response.status_code == 200:
             return response.json()
-    except Exception:
-        return None
+    except Exception as e:
+        print(f"Health check error: {e}")
     return None
 
 def analyze_ecg(file, clinical_info):
     with st.spinner("🫀 Анализируем ЭКГ..."):
-        files = {"ecg_file": (file.name, file, file.type or "application/octet-stream")}
+        files = {"ecg_file": file}
         data = {"clinical_info": clinical_info}
         try:
-            response = requests.post(f"{API_URL}/analyze_ecg", files=files, data=data, timeout=120)
+            response = requests.post(f"{API_URL}/analyze_ecg", files=files, data=data, timeout=60)
             if response.status_code == 200:
                 return response.json()
-            st.error(f"Ошибка API: {response.status_code} — {response.text[:300]}")
-            return None
+            else:
+                st.error(f"Ошибка API: {response.status_code}")
+                return None
         except Exception as e:
             st.error(f"Ошибка подключения: {e}")
             return None
@@ -125,63 +130,52 @@ def analyze_clinical_only(clinical_info):
     with st.spinner("🩺 Анализируем симптомы..."):
         data = {"clinical_info": clinical_info}
         try:
-            response = requests.post(f"{API_URL}/analyze_clinical", data=data, timeout=120)
+            response = requests.post(f"{API_URL}/analyze_clinical", data=data, timeout=60)
             if response.status_code == 200:
                 return response.json()
-            st.error(f"Ошибка API: {response.status_code} — {response.text[:300]}")
-            return None
+            else:
+                st.error(f"Ошибка API: {response.status_code}")
+                return None
         except Exception as e:
             st.error(f"Ошибка подключения: {e}")
             return None
 
 def chat_with_bot(message, diagnosis, confidence, clinical_info, rag_context):
     with st.spinner("🤔 Думаю..."):
-        rag_context_str = json.dumps(rag_context or {}, ensure_ascii=False)
+        rag_context_str = json.dumps(rag_context, ensure_ascii=False) if rag_context else "{}"
+
         data = {
             "message": message,
             "diagnosis": diagnosis,
-            "confidence": str(confidence),
+            "confidence": confidence,
             "clinical_info": clinical_info,
             "rag_context": rag_context_str
         }
         try:
-            response = requests.post(f"{API_URL}/chat", data=data, timeout=120)
+            response = requests.post(f"{API_URL}/chat", data=data, timeout=60)
             if response.status_code == 200:
                 return response.json()
-            st.error(f"Ошибка API: {response.status_code} — {response.text[:300]}")
-            return None
+            else:
+                st.error(f"Ошибка API: {response.status_code}")
+                return None
         except Exception as e:
             st.error(f"Ошибка подключения: {e}")
             return None
-
-def format_source(source, default_relevance=0.5):
-    if isinstance(source, dict):
-        title = source.get("title", "Источник")
-        relevance = source.get("relevance", source.get("score", default_relevance))
-        content = source.get("content", source.get("text", ""))
-        return title, float(relevance), content
-    text = str(source)
-    title_match = re.search(r"\*\*(.+?)\*\*", text)
-    title = title_match.group(1) if title_match else "Источник"
-    relevance_match = re.search(r"релевантность:\s*([\d.]+)", text)
-    relevance = float(relevance_match.group(1)) if relevance_match else default_relevance
-    clean = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-    clean = re.sub(r"\(релевантность:\s*[\d.]+%?\)", "", clean)
-    return title, relevance, clean
 
 st.sidebar.title("🔌 Статус системы")
 api_status = check_api_health()
 
 if api_status:
-    st.sidebar.success("✅ API Online")
+    st.sidebar.success(f"✅ API Online")
     st.sidebar.markdown(f"""
-**💻 Device:** {api_status.get('device', 'N/A')}  
-**📊 Model:** {'✅ Loaded' if api_status.get('model_loaded') else '❌ Not loaded'}
-""")
+    **💻 Device:** {api_status.get('device', 'N/A')}  
+    **📊 Model:** {'✅ Loaded' if api_status.get('model_loaded') else '❌ Not loaded'}
+    """)
+
     if 'classes' in api_status:
         st.sidebar.markdown("### 🏷️ Доступные диагнозы")
         classes = api_status['classes']
-        for cls in classes[:8]:
+        for i, cls in enumerate(classes[:8]):
             st.sidebar.markdown(f"- {cls}")
         if len(classes) > 8:
             st.sidebar.markdown(f"... и {len(classes) - 8} других")
@@ -212,6 +206,7 @@ with tab1:
             type=['mat', 'npy', 'csv'],
             help="Поддерживаются форматы: .mat (PTB-XL), .npy, .csv"
         )
+
         if ecg_file:
             st.info(f"✅ Файл загружен: {ecg_file.name} ({ecg_file.size/1024:.1f} KB)")
 
@@ -257,40 +252,54 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
 
-                if result.get('rag_confidence') is not None:
+                if result.get('rag_confidence'):
                     st.metric(
                         label="📚 Уверенность поиска в базе знаний",
-                        value=f"{result['rag_confidence']:.1%}"
+                        value=f"{result['rag_confidence']:.1%}",
+                        help="Средняя релевантность найденных источников"
                     )
 
                 if result.get('top3_predictions'):
                     st.subheader("📊 Все возможные диагнозы")
                     cols = st.columns(3)
-                    for i, (diag, prob) in enumerate(result['top3_predictions'][:3]):
+                    for i, (diag, prob) in enumerate(result['top3_predictions']):
                         with cols[i]:
-                            st.metric(label=diag, value=f"{prob:.1%}")
+                            st.metric(label=f"{diag}", value=f"{prob:.1%}", delta=None)
 
                     st.subheader("📈 Распределение вероятностей")
-                    prob_data = [{"Диагноз": d, "Вероятность": p} for d, p in result['top3_predictions']]
+                    prob_data = []
+                    for diag, prob in result['top3_predictions']:
+                        prob_data.append({"Диагноз": diag, "Вероятность": prob})
+
+                    all_classes = ["NORM", "MI", "STTC", "CD", "HYP"]
+                    existing = [p[0] for p in result['top3_predictions']]
+                    for cls in all_classes:
+                        if cls not in existing:
+                            prob_data.append({"Диагноз": cls, "Вероятность": 0.0})
+
                     df_probs = pd.DataFrame(prob_data)
                     st.bar_chart(df_probs.set_index("Диагноз"))
 
                 with st.expander("📋 Структурированные рекомендации", expanded=True):
-                    rec = result.get('structured_recommendation', '')
-                    st.write(rec if isinstance(rec, str) else json.dumps(rec, ensure_ascii=False, indent=2))
+                    rec = result.get('structured_recommendation', {})
+                    if isinstance(rec, dict):
+                        for key, value in rec.items():
+                            st.markdown(f"**{key.replace('_', ' ').title()}:** {value}")
+                    elif isinstance(rec, str):
+                        st.write(rec)
+                    else:
+                        st.json(rec)
 
-                with st.expander("💬 Полный анализ", expanded=False):
+                with st.expander("💬 Полный анализ (Chain of Thought)", expanded=False):
                     st.markdown(result.get('full_cot_recommendation', 'Нет данных'))
 
                 if result.get('rag_references'):
                     st.subheader("📚 Источники из базы знаний")
-                    for i, ref in enumerate(result['rag_references'][:3], 1):
-                        title, relevance, content = format_source(ref, result.get('rag_confidence', 0.5))
+                    for i, ref in enumerate(result['rag_references'][:3]):
                         st.markdown(f"""
                         <div class="rag-reference">
-                            <b>📖 Источник {i}: {title}</b><br/>
-                            <span style="color:#666">Релевантность: {relevance:.1%}</span><br/>
-                            {content[:500]}...
+                            <b>📖 Источник {i+1}</b><br/>
+                            {str(ref)[:500]}...
                         </div>
                         """, unsafe_allow_html=True)
         else:
@@ -301,7 +310,10 @@ with tab1:
 
 with tab2:
     st.subheader("🩺 Анализ без ЭКГ")
-    st.markdown("Опишите клиническую картину, и AI предоставит рекомендации на основе базы клинических знаний.")
+    st.markdown("""
+    Опишите клиническую картину, и AI предоставит рекомендации на основе 
+    **базы клинических знаний**.
+    """)
 
     clinical_only = st.text_area(
         "Клиническая картина",
@@ -324,21 +336,25 @@ with tab2:
                 </div>
                 """, unsafe_allow_html=True)
 
-                if result.get('rag_confidence') is not None:
-                    st.metric("📚 Уверенность поиска в базе знаний", f"{result['rag_confidence']:.1%}")
+                if result.get('rag_confidence'):
+                    st.metric(
+                        label="📚 Уверенность поиска в базе знаний",
+                        value=f"{result['rag_confidence']:.1%}",
+                        help="Средняя релевантность найденных источников"
+                    )
 
                 st.subheader("💡 Клинические рекомендации")
                 st.markdown(result.get('structured_recommendation', ''))
 
-                if result.get('rag_references'):
+                if result.get('formatted_sources'):
                     with st.expander("📚 Источники из базы знаний", expanded=True):
-                        for i, source in enumerate(result['rag_references'][:5], 1):
-                            title, relevance, content = format_source(source, result.get('rag_confidence', 0.5))
+                        for i, source in enumerate(result['formatted_sources'], 1):
+                            relevance = source.get('relevance', result.get('rag_confidence', 0.5))
                             st.markdown(f"""
                             <div class="source-card">
-                                <b>{i}. {title}</b>
+                                <b>{i}. {source.get('title', 'Источник')}</b>
                                 <span style="color: #666; font-size: 0.9em;">(релевантность: {relevance:.1%})</span><br/>
-                                {content[:300]}...
+                                {source.get('content', source.get('text', ''))[:300]}...
                             </div>
                             """, unsafe_allow_html=True)
 
@@ -346,6 +362,10 @@ with tab2:
                     st.subheader("📋 Рекомендованные действия")
                     for action in result['recommended_actions']:
                         st.markdown(f"- {action}")
+
+                sources_count = len(result.get('formatted_sources', []))
+                if sources_count > 0:
+                    st.caption(f"✅ Анализ основан на {sources_count} источниках из базы знаний")
 
                 if result.get('requires_ecg', True):
                     st.session_state.last_diagnosis = {
@@ -361,7 +381,7 @@ with tab2:
 
 with tab3:
     st.subheader("💬 AI Кардиологический Ассистент")
-    st.markdown("Задайте вопросы о диагнозе, лечении или интерпретации результатов.")
+    st.markdown("Задайте вопросы о диагнозе, лечении или интерпретации результатов")
 
     if st.session_state.last_diagnosis:
         with st.expander("📋 Контекст последнего анализа", expanded=False):
@@ -371,50 +391,105 @@ with tab3:
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Диагноз", st.session_state.last_diagnosis['diagnosis'])
-            with col2:
                 st.metric("Достоверность", f"{st.session_state.last_diagnosis['confidence']:.1%}")
+            with col2:
+                total_sources = len(st.session_state.last_diagnosis.get('rag_refs', []))
+                st.metric("Источников в RAG", total_sources)
             with col3:
-                st.metric("Источников", len(st.session_state.last_diagnosis.get('rag_refs', [])))
-
+                rag_conf = st.session_state.last_diagnosis.get('rag_confidence', 0)
+                if rag_conf > 0:
+                    st.metric("📚 Общая релевантность RAG", f"{rag_conf:.1%}", help="Средняя релевантность найденных источников")
             st.markdown("**Клиническая информация:**")
             st.info(st.session_state.last_diagnosis['clinical_info'][:300] + ("..." if len(st.session_state.last_diagnosis['clinical_info']) > 300 else ""))
 
         previous_sources = st.session_state.last_diagnosis.get('rag_refs', [])
         if previous_sources:
             st.markdown("---")
-            st.subheader("📚 Источники из последнего анализа")
+            st.subheader("📚 Источники из последнего анализа (предыдущий контекст)")
+            st.caption("Эти источники были найдены при анализе ЭКГ/симптомов")
+
             for i, source in enumerate(previous_sources[:3], 1):
-                title, relevance, content = format_source(source, st.session_state.last_diagnosis.get('rag_confidence', 0.5))
-                st.markdown(f"""
-                <div class="chat-source-previous">
-                    <b>📖 {i}. {title}</b>
-                    <span style="color: #666;">(релевантность: {relevance:.1%})</span><br/>
-                    <span style="color: #555; font-size: 0.85em;">{content[:200]}...</span>
-                </div>
-                """, unsafe_allow_html=True)
+                if isinstance(source, dict):
+                    title = source.get('title', f'Источник {i}')
+                    relevance = source.get('relevance', st.session_state.last_diagnosis.get('rag_confidence', 0.5))
+                    content = source.get('content', source.get('text', ''))[:200]
+                    st.markdown(f"""
+                    <div class="chat-source-previous">
+                        <b>📖 {i}. {title}</b>
+                        <span style="color: #666;">(релевантность: {relevance:.1%})</span><br/>
+                        <span style="color: #555; font-size: 0.85em;">{content}...</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    title_match = re.search(r'\*\*(.+?)\*\*', str(source))
+                    title = title_match.group(1) if title_match else f'Источник {i}'
+                    relevance_match = re.search(r'релевантность:\s*([\d.]+)', str(source))
+                    relevance = float(relevance_match.group(1)) if relevance_match else 0.5
+                    clean_content = re.sub(r'\*\*(.+?)\*\*', r'\1', str(source))
+                    clean_content = re.sub(r'\(релевантность:\s*[\d.]+%?\)', '', clean_content)
+                    st.markdown(f"""
+                    <div class="chat-source-previous">
+                        <b>📖 {i}. {title}</b>
+                        <span style="color: #666;">(релевантность: {relevance:.1%})</span><br/>
+                        <span style="color: #555; font-size: 0.85em;">{clean_content[:200]}...</span>
+                    </div>
+                    """, unsafe_allow_html=True)
 
         st.markdown("---")
     else:
         st.info("ℹ️ Сначала выполните анализ ЭКГ или клинический анализ, чтобы получить контекст для чата")
 
-    for msg in st.session_state.chat_history:
-        if msg['role'] == 'user':
-            st.markdown(f"**👤 Вы ({msg.get('timestamp', '')}):** {msg['content']}")
+    chat_container = st.container()
+    with chat_container:
+        if not st.session_state.chat_history:
+            st.info("💬 Задайте вопрос AI ассистенту о диагнозе или лечении")
         else:
-            st.markdown(f"**🤖 AI Ассистент ({msg.get('timestamp', '')}):** {msg['content']}")
-            new_sources = msg.get('rag_references', [])
-            if new_sources:
-                with st.expander(f"🔍 Источники по вашему вопросу (релевантность: {msg.get('rag_confidence', 0.0):.1%})", expanded=False):
-                    for i, source in enumerate(new_sources[:3], 1):
-                        title, relevance, content = format_source(source, msg.get('rag_confidence', 0.5))
-                        st.markdown(f"""
-                        <div class="chat-source-new">
-                            <b>🔍 {i}. {title}</b>
-                            <span style="color: #666;">(релевантность: {relevance:.1%})</span><br/>
-                            <span style="color: #555; font-size: 0.85em;">{content[:200]}...</span>
-                        </div>
-                        """, unsafe_allow_html=True)
-            st.markdown("---")
+            for msg_idx, msg in enumerate(st.session_state.chat_history):
+                if msg['role'] == 'user':
+                    st.markdown(f"**👤 Вы ({msg.get('timestamp', '')}):** {msg['content']}")
+                else:
+                    st.markdown(f"**🤖 AI Ассистент ({msg.get('timestamp', '')}):** {msg['content']}")
+
+                    new_sources = msg.get('rag_references', [])
+                    if new_sources and len(new_sources) > 0:
+                        rag_conf = msg.get('rag_confidence', 0)
+                        with st.expander(f"🔍 Найдено по вашему вопросу (релевантность: {rag_conf:.1%})", expanded=False):
+                            st.caption("Источники, найденные специально для ответа на ваш вопрос")
+
+                            for i, source in enumerate(new_sources[:3], 1):
+                                if isinstance(source, dict):
+                                    title = source.get('title', f'Источник {i}')
+                                    relevance = source.get('relevance', 0)
+                                    content = source.get('content', source.get('text', ''))[:200]
+                                    st.markdown(f"""
+                                    <div class="chat-source-new">
+                                        <b>🔍 {i}. {title}</b>
+                                        <span style="color: #666;">(релевантность: {relevance:.1%})</span><br/>
+                                        <span style="color: #555; font-size: 0.85em;">{content}...</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                elif isinstance(source, str):
+                                    title_match = re.search(r'\*\*(.+?)\*\*', source)
+                                    title = title_match.group(1) if title_match else f'Источник {i}'
+                                    relevance_match = re.search(r'релевантность:\s*([\d.]+)', source)
+                                    relevance = float(relevance_match.group(1)) if relevance_match else 0.5
+                                    clean_content = re.sub(r'\*\*(.+?)\*\*', r'\1', source)
+                                    clean_content = re.sub(r'\(релевантность:\s*[\d.]+%?\)', '', clean_content)
+                                    st.markdown(f"""
+                                    <div class="chat-source-new">
+                                        <b>🔍 {i}. {title}</b>
+                                        <span style="color: #666;">(релевантность: {relevance:.1%})</span><br/>
+                                        <span style="color: #555; font-size: 0.85em;">{clean_content[:200]}...</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                else:
+                                    st.markdown(f"""
+                                    <div class="chat-source-new">
+                                        <b>🔍 {i}. Источник</b><br/>
+                                        <span style="color: #555; font-size: 0.85em;">{str(source)[:200]}...</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                st.markdown("---")
 
     col1, col2 = st.columns([4, 1])
     with col1:
@@ -429,6 +504,7 @@ with tab3:
 
     if st.button("🗑️ Очистить историю", use_container_width=True):
         st.session_state.chat_history = []
+        st.session_state.backend_memory = {"messages": [], "sources": []}
         st.rerun()
 
     if send_button and user_message and st.session_state.last_diagnosis:
@@ -439,10 +515,10 @@ with tab3:
         rag_confidence = st.session_state.last_diagnosis.get('rag_confidence', 0.0)
 
         rag_context = {
-            "references": rag_refs,
-            "confidence": rag_confidence,
-            "diagnosis": diagnosis,
-            "clinical_info": clinical_info
+            'references': rag_refs,
+            'confidence': rag_confidence,
+            'diagnosis': diagnosis,
+            'clinical_info': clinical_info
         }
 
         st.session_state.chat_history.append({
@@ -477,30 +553,42 @@ with tab3:
 
 with tab4:
     st.markdown("""
-    ### 🚀 GigaCardioAgent v2.1
+    ### 🚀 GigaCardioAgent v2.0
 
     **Интеллектуальная система для кардиологической диагностики**
 
     #### 🔬 Технологии:
-    - **Нейросетевая модель:** Сверточная нейронная сеть для анализа ЭКГ.
-    - **RAG:** Векторная база клинических рекомендаций в Qdrant.
-    - **LLM:** GigaChat для генерации интерпретаций.
-    - **FastAPI + Streamlit:** Бэкенд и интерфейс.
+    - **Нейросетевая модель:** Сверточная нейронная сеть для анализа ЭКГ
+    - **RAG (Retrieval-Augmented Generation):** Векторная база клинических рекомендаций в Qdrant
+    - **LLM:** GigaChat для генерации интерпретаций
+    - **FastAPI + Streamlit:** Высокопроизводительный бэкенд и удобный интерфейс
 
+    #### 📊 Поддерживаемые диагнозы:
+    """)
+
+    if api_status and 'classes' in api_status:
+        classes = api_status['classes']
+        cols = st.columns(3)
+        for i, cls in enumerate(classes):
+            with cols[i % 3]:
+                st.markdown(f"- **{cls}**")
+
+    st.markdown("""
     #### 📁 Форматы файлов:
-    - `.mat` - PTB-XL датасет.
-    - `.npy` - NumPy массивы.
-    - `.csv` - Табличные данные.
+    - `.mat` - PTB-XL датасет (12 отведений, 5000 точек)
+    - `.npy` - NumPy массивы
+    - `.csv` - Табличные данные
 
     #### 🔄 API Endpoints:
-    - `POST /analyze_ecg`
-    - `POST /analyze_clinical`
-    - `POST /chat`
+    - `POST /analyze_ecg` - Анализ с загрузкой ЭКГ
+    - `POST /analyze_clinical` - Анализ только симптомов
+    - `POST /chat` - RAG чат с AI
 
     #### 💡 Особенности:
-    - Клинический анализ использует RAG для похожих случаев.
-    - AI ассистент ищет новые источники по каждому вопросу.
-    - В чате отображаются и предыдущие, и новые источники.
+    - Клинический анализ использует RAG для поиска похожих случаев
+    - AI ассистент ищет НОВЫЕ источники по каждому вопросу пользователя
+    - В чате отображаются и предыдущие (из анализа), и новые источники
+    - Все рекомендации основаны на клинических источниках из Qdrant
     """)
 
     if api_status:
@@ -517,7 +605,7 @@ with tab4:
 
 st.markdown("---")
 st.markdown(
-    "<div style='text-align: center; color: gray; padding: 1rem;'>© 2024 GigaCardioAgent - Ваш AI кардиолог</div>",
+    "<div style='text-align: center; color: gray; padding: 1rem;'>© 2024 GigaCardioAgent - Ваш AI кардиолог | Работает на GigaChat и нейронных сетях</div>",
     unsafe_allow_html=True
 )
 
