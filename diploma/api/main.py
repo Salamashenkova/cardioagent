@@ -109,7 +109,6 @@ async def analyze_ecg(
 
     try:
         file_content = await ecg_file.read()
-
         result = await service.process_ecg(
             ecg_file_content=file_content,
             filename=ecg_file.filename,
@@ -128,6 +127,7 @@ async def analyze_ecg(
             "structured_recommendation": result["structured_recommendation"],
             "full_cot_recommendation": result["full_cot_recommendation"],
             "rag_references": result["rag_references"],
+            "formatted_sources": result.get("rag_references", []),
             "clinical_info": clinical_info,
             "timestamp": result["timestamp"]
         }
@@ -157,7 +157,7 @@ async def analyze_clinical(clinical_info: str = Form(...)):
             "clinical_info": clinical_info,
             "structured_recommendation": result.get("structured_recommendation", ""),
             "rag_references": result.get("rag_references", []),
-            "formatted_sources": result.get("formatted_sources", []),
+            "formatted_sources": result.get("formatted_sources", result.get("rag_references", [])),
             "recommended_actions": result.get("recommended_actions", []),
             "requires_ecg": result.get("requires_ecg", True),
             "timestamp": result.get("timestamp", datetime.now().isoformat())
@@ -215,6 +215,7 @@ async def chat(
                     "clinical_info": clinical_info[:200] if clinical_info else ""
                 }
             }
+
         return {
             "success": False,
             "response": result.get("response", "Извините, произошла ошибка"),
