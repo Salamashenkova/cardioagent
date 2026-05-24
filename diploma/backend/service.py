@@ -1,4 +1,4 @@
-# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С ДЕДУПЛИКАЦИЕЙ RAG И ЧАТОМ
+# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С ПАМЯТЬЮ В ЧАТЕ
 
 print("=== backend/service.py: НАЧАЛО ЗАГРУЗКИ ===")
 print("1. Импортируем базовые модули...")
@@ -58,9 +58,9 @@ class Config:
     
     def __post_init__(self):
         if not self.qdrant_url or not self.qdrant_api_key:
-            print("⚠️ ВНИМАНИЕ: Qdrant не настроен! Добавьте переменные QDRANT_URL и QDRANT_API_KEY в окружение.")
+            print("⚠️ ВНИМАНИЕ: Qdrant не настроен!")
         if not self.gigachat_credentials:
-            print("⚠️ ВНИМАНИЕ: GigaChat не настроен! Добавьте переменную GIGACHAT_CREDENTIALS в окружение.")
+            print("⚠️ ВНИМАНИЕ: GigaChat не настроен!")
     
     def get_model_path(self):
         print(f"   get_model_path: ищем модель...")
@@ -85,7 +85,7 @@ class Config:
                 print(f"   ✅ Найден файл модели: {pth_files[0]}")
                 return pth_files[0]
         
-        print(f"   ⚠️ Модель не найдена по путям: {self.model_path}, {api_relative}, {root_relative}")
+        print(f"   ⚠️ Модель не найдена")
         return self.model_path
 
 print("9. Создаём экземпляр Config...")
@@ -94,10 +94,8 @@ print(f"10. Config создан: device={config.device}, model_path={config.mode
 
 CLASS_NAMES = ["NORM", "MI", "STTC", "CD", "HYP"]
 print(f"11. CLASS_NAMES = {CLASS_NAMES}")
-print(f"12. Qdrant URL: {bool(config.qdrant_url)}, GigaChat credentials: {bool(config.gigachat_credentials)}")
-print(f"🚀 HybridRAG Pro v2.0 | Device: {config.device} | Qdrant: {bool(config.qdrant_url)} | GigaChat: {bool(config.gigachat_credentials)}")
 
-print("13. Определяем класс BM25...")
+print("12. Определяем класс BM25...")
 class BM25:
     def __init__(self, docs, k1=1.2, b=0.75):
         self.k1, self.b = k1, b
@@ -132,9 +130,9 @@ class BM25:
             return [(s - min_score) / (max_score - min_score) for s in raw_scores]
         return [0.5] * len(raw_scores)
 
-print("14. ✅ Класс BM25 определён")
+print("13. ✅ Класс BM25 определён")
 
-print("15. Определяем класс QdrantRAG...")
+print("14. Определяем класс QdrantRAG...")
 class QdrantRAG:
     def __init__(self, config):
         print(f"   QdrantRAG.__init__: начало")
@@ -147,7 +145,7 @@ class QdrantRAG:
                     api_key=config.qdrant_api_key,
                     timeout=60.0
                 )
-                print(f"   ✅ Qdrant подключен: {config.qdrant_url}")
+                print(f"   ✅ Qdrant подключен")
             except Exception as e:
                 self.client = None
                 print(f"   ⚠️ Ошибка подключения к Qdrant: {e}")
@@ -166,7 +164,6 @@ class QdrantRAG:
         return self._embedding_model
 
     async def search_similar(self, diagnosis: str, clinical: str, limit: int = 10) -> Tuple[List[str], float]:
-        """Поиск похожих документов в базе знаний"""
         if not self.client:
             return ["Qdrant недоступен - используем общие рекомендации"], 0.0
         
@@ -189,7 +186,6 @@ class QdrantRAG:
                 score_threshold=0.65
             )
             
-            # Дедупликация по тексту
             unique_by_content = {}
             
             for hit in hits.points:
@@ -211,7 +207,7 @@ class QdrantRAG:
                     }
             
             if not unique_by_content:
-                return ["Не найдено релевантных документов в базе знаний"], 0.0
+                return ["Не найдено релевантных документов"], 0.0
             
             sorted_results = sorted(
                 unique_by_content.values(), 
@@ -220,18 +216,16 @@ class QdrantRAG:
             )[:limit]
             
             results = [item['formatted'] for item in sorted_results]
-            
             avg_rag_confidence = sum(all_scores) / len(all_scores) if all_scores else 0.0
-            print(f"   📊 Найдено уникальных источников: {len(results)}, средняя уверенность RAG: {avg_rag_confidence:.3f}")
+            print(f"   📊 Найдено уникальных источников: {len(results)}, средняя уверенность: {avg_rag_confidence:.3f}")
             
             return results, avg_rag_confidence
             
         except Exception as e:
             print(f"   Qdrant search error: {e}")
-            return ["Ошибка поиска в базе знаний. Используем общие рекомендации."], 0.0
+            return ["Ошибка поиска в базе знаний"], 0.0
     
     async def search_for_chat(self, query: str, limit: int = 5) -> Tuple[List[Dict], float]:
-        """Специальный поиск для чата - возвращает структурированные документы"""
         if not self.client:
             return [], 0.0
         
@@ -249,7 +243,6 @@ class QdrantRAG:
                 score_threshold=0.65
             )
             
-            # Дедупликация по тексту
             unique_by_content = {}
             
             for hit in hits.points:
@@ -287,9 +280,9 @@ class QdrantRAG:
             print(f"   Чат-поиск error: {e}")
             return [], 0.0
 
-print("16. ✅ Класс QdrantRAG определён")
+print("15. ✅ Класс QdrantRAG определён")
 
-print("17. Определяем класс GigaChatClient...")
+print("16. Определяем класс GigaChatClient...")
 class GigaChatClient:
     def __init__(self, config):
         print(f"   GigaChatClient.__init__: начало")
@@ -345,22 +338,17 @@ class GigaChatClient:
             except Exception as e:
                 print(f"   GigaChat retry {attempt+1}: {e}")
                 await asyncio.sleep(2 ** attempt)
-        return "🚨 GIGA OFFLINE: АСА 160мг + ЭКГ повтор + кардиолог ОЧНО"
+        return "🚨 GIGA OFFLINE: обратитесь к врачу"
     
     async def chat_answer(self, message: str, diagnosis: str, confidence: float, 
                           clinical_info: str, rag_documents: List[Dict]) -> Tuple[str, List[Dict], float]:
-        """
-        Ответ на вопрос пользователя с использованием RAG
-        Возвращает: (ответ, использованные источники, уверенность RAG)
-        """
         if not self.gigachat:
             return "🚨 GigaChat недоступен", [], 0.0
         
-        # Форматируем источники для промпта
         sources_text = ""
         if rag_documents:
-            sources_text = "\n\n📚 АКТУАЛЬНЫЕ ИСТОЧНИКИ ИЗ БАЗЫ ЗНАНИЙ:\n"
-            for i, doc in enumerate(rag_documents[:5], 1):
+            sources_text = "\n\n📚 Актуальные источники из базы знаний:\n"
+            for i, doc in enumerate(rag_documents[:3], 1):
                 sources_text += f"\n{i}. **{doc.get('title', 'Источник')}** (релевантность: {doc.get('relevance', 0):.1%})\n"
                 sources_text += f"   {doc.get('content', '')[:400]}...\n"
         
@@ -373,10 +361,7 @@ class GigaChatClient:
 
 ВОПРОС ПОЛЬЗОВАТЕЛЯ: {message}
 
-ОТВЕТЬ НА РУССКОМ ЯЗЫКЕ, подробно и профессионально.
-Если в источниках есть релевантная информация, обязательно используй её и ссылайся на источники.
-Если точного ответа нет, дай общие рекомендации и предложи обратиться к врачу.
-Будь полезным, но не давай опасных советов - всегда рекомендуй консультацию с врачом при необходимости."""
+Ответь на русском языке, подробно и профессионально. Если в источниках есть релевантная информация, используй её."""
         
         for attempt in range(3):
             try:
@@ -386,20 +371,17 @@ class GigaChatClient:
                     delta = chunk.choices[0].delta.content or ""
                     chunks.append(delta)
                 response = "".join(chunks).strip()
-                
-                # Вычисляем среднюю релевантность использованных источников
                 avg_relevance = sum(d.get('relevance', 0) for d in rag_documents) / len(rag_documents) if rag_documents else 0
-                
                 return response, rag_documents, avg_relevance
             except Exception as e:
                 print(f"   Chat retry {attempt+1}: {e}")
                 await asyncio.sleep(2 ** attempt)
         
-        return "🚨 Сервис временно недоступен. Пожалуйста, попробуйте позже.", [], 0.0
+        return "Сервис временно недоступен", [], 0.0
 
-print("18. ✅ Класс GigaChatClient определён")
+print("17. ✅ Класс GigaChatClient определён")
 
-print("19. Определяем класс ProECGNet_SOTA...")
+print("18. Определяем класс ProECGNet_SOTA...")
 class ProECGNet_SOTA(nn.Module):
     def __init__(self, num_classes=5):
         super().__init__()
@@ -444,24 +426,18 @@ class ProECGNet_SOTA(nn.Module):
         x = x.squeeze(-1)
         return self.head(x)
 
-print("20. ✅ Класс ProECGNet_SOTA определён")
+print("19. ✅ Класс ProECGNet_SOTA определён")
 
-print("21. Определяем класс AppService...")
+print("20. Определяем класс AppService...")
 class AppService:
     def __init__(self):
         print("=== AppService.__init__: НАЧАЛО ===")
-        print("  1. Сохраняем config...")
         self.config = config
-        print("  2. Сохраняем device...")
         self.device = config.device
-        print(f"  3. device = {self.device}")
-        print("  4. Инициализируем _rag = None...")
         self._rag = None
-        print("  5. Инициализируем _gigachat_client = None...")
         self._gigachat_client = None
-        print("  6. Инициализируем _model = None...")
         self._model = None
-        print(f"  ✅ AppService инициализирован (легковесная версия) на {self.device}")
+        print(f"  ✅ AppService инициализирован на {self.device}")
         print("=== AppService.__init__: КОНЕЦ ===")
 
     @property
@@ -474,7 +450,7 @@ class AppService:
     @property
     def gigachat_client(self):
         if self._gigachat_client is None:
-            print("  🚀 Ленивая загрузка: инициализация GigaChat клиента...")
+            print("  🚀 Ленивая загрузка: инициализация GigaChat...")
             self._gigachat_client = GigaChatClient(self.config)
         return self._gigachat_client
 
@@ -489,59 +465,32 @@ class AppService:
         print("=== _load_model: НАЧАЛО ===")
         try:
             model_path = self.config.get_model_path()
-            print(f"  1. Загрузка модели из: {model_path}")
-            
-            print("  2. Создаём экземпляр модели...")
             model = ProECGNet_SOTA(num_classes=len(CLASS_NAMES))
-            print("  3. Модель создана, загружаем checkpoint...")
-            
             checkpoint = torch.load(model_path, map_location=self.config.device)
-            print("  4. Checkpoint загружен")
             
             if isinstance(checkpoint, dict):
                 state_dict = checkpoint.get('model_state_dict', checkpoint.get('state_dict', checkpoint))
-                print("  5. Извлекли state_dict из словаря")
             else:
                 state_dict = checkpoint
-                print("  5. Checkpoint является state_dict")
                 
             if all(k.startswith('module.') for k in state_dict.keys()):
                 state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
-                print("  6. Удалили 'module.' из ключей")
-            else:
-                print("  6. 'module.' не обнаружено")
             
-            print("  7. Загружаем state_dict в модель...")
             model.load_state_dict(state_dict, strict=False)
-            print("  8. Перемещаем модель на устройство...")
             model.to(self.config.device)
-            print("  9. Переводим модель в режим eval...")
             model.eval()
             
             print(f"  ✅ Модель загружена успешно!")
-            print("=== _load_model: КОНЕЦ (успех) ===")
             return model
             
         except Exception as e:
             print(f"  ❌ Ошибка загрузки модели: {e}")
-            import traceback
-            traceback.print_exc()
-            print(f"  🔍 Путь к модели: {self.config.model_path}")
-            print(f"  🔍 Текущая рабочая директория: {os.getcwd()}")
-            
-            models_dir = Path("models")
-            if models_dir.exists():
-                print(f"  📁 Содержимое папки models/: {list(models_dir.glob('*.pth'))}")
-            
-            print("  ⚠️ Используется fallback модель (случайные веса)")
             model = ProECGNet_SOTA(num_classes=len(CLASS_NAMES))
             model.to(self.config.device)
             model.eval()
-            print("=== _load_model: КОНЕЦ (fallback) ===")
             return model
 
     def _load_ecg_from_file(self, file_content: bytes, filename: str) -> np.ndarray:
-        print(f"  _load_ecg_from_file: загрузка {filename}")
         try:
             if filename.endswith('.mat'):
                 mat = sio.loadmat(io.BytesIO(file_content))
@@ -554,16 +503,11 @@ class AppService:
             
             if ecg.shape == (5000, 12):
                 ecg = ecg.T
-            elif ecg.shape == (12, 5000):
-                pass
             elif ecg.shape == (1, 12, 5000):
                 ecg = ecg[0]
             elif ecg.shape == (1, 5000, 12):
                 ecg = ecg[0].T
-            else:
-                raise ValueError(f"Неверная форма: {ecg.shape}")
             
-            print(f"  📊 ЭКГ загружена: форма {ecg.shape}")
             return ecg.astype(np.float32)
         except Exception as e:
             raise ValueError(f"Ошибка загрузки ЭКГ: {str(e)}")
@@ -585,7 +529,6 @@ class AppService:
         return ecg_tensor.to(self.config.device)
 
     def _classify_ecg(self, ecg_tensor: torch.Tensor) -> Tuple[str, float, List[Tuple[str, float]]]:
-        print("  _classify_ecg: начало классификации")
         self.model.eval()
         with torch.no_grad():
             output = self.model(ecg_tensor)
@@ -603,24 +546,17 @@ class AppService:
         diagnosis = CLASS_NAMES[predicted_idx.item()]
         confidence = confidence.item()
         
-        print(f"  🎯 Диагноз: {diagnosis} (confidence: {confidence:.3f})")
-        print(f"  📊 Топ-3: {top3_predictions}")
-        
         return diagnosis, confidence, top3_predictions
 
     async def process_ecg(self, ecg_file_content: bytes, filename: str, clinical_notes: str) -> Dict[str, Any]:
-        print(f"=== process_ecg: начало, filename={filename} ===")
         try:
             ecg_data = self._load_ecg_from_file(ecg_file_content, filename)
             processed_ecg = self._preprocess_ecg(ecg_data)
-            print(f"  🔧 После предобработки: форма {processed_ecg.shape}")
-            
             diagnosis, confidence, top3_predictions = self._classify_ecg(processed_ecg)
             
             top3_text = ", ".join([f"{cls} ({prob:.1%})" for cls, prob in top3_predictions])
             
             rag_results, rag_confidence = await self.rag.search_similar(diagnosis, clinical_notes)
-            print(f"  📊 RAG уверенность: {rag_confidence:.3f}")
             
             tasks = [
                 self.gigachat_client.chat_with_rag(
@@ -652,22 +588,11 @@ class AppService:
                 "timestamp": datetime.datetime.now().isoformat()
             }
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return {
-                "success": False,
-                "error": str(e),
-                "diagnosis": "ERROR",
-                "confidence": 0.0
-            }
+            return {"success": False, "error": str(e), "diagnosis": "ERROR", "confidence": 0.0}
 
     async def analyze_clinical_only(self, clinical_notes: str) -> Dict[str, Any]:
-        print(f"=== analyze_clinical_only: начало ===")
         try:
-            print(f"  🩺 Клинический анализ симптомов: {clinical_notes[:100]}...")
-            
             rag_results, rag_confidence = await self.rag.search_similar("", clinical_notes)
-            print(f"  📊 RAG уверенность: {rag_confidence:.3f}")
             
             recommendations = await self.gigachat_client.chat_with_rag(
                 diagnosis="Клинический анализ симптомов (без ЭКГ)",
@@ -682,11 +607,8 @@ class AppService:
                 if "**" in source:
                     lines = source.split('\n')
                     title = lines[0].replace('**', '') if lines else "Источник"
-                    # Извлекаем релевантность из строки
-                    relevance = 0.5
                     match = re.search(r'релевантность:\s*([\d.]+)', source)
-                    if match:
-                        relevance = float(match.group(1))
+                    relevance = float(match.group(1)) if match else 0.5
                     content = '\n'.join(lines[1:]) if len(lines) > 1 else source
                 else:
                     title = f"Источник {i}"
@@ -700,32 +622,19 @@ class AppService:
                     "full_text": source
                 })
             
-            sources_section = ""
-            if formatted_sources:
-                sources_section = "\n\n### 📚 Источники из базы знаний\n\n"
-                for i, source in enumerate(formatted_sources, 1):
-                    sources_section += f"**{i}. {source['title']}** (релевантность: {source['relevance']:.1%})\n"
-                    sources_section += f"{source['content'][:200]}...\n\n"
-            
             structured_rec = f"""### 📋 Оценка симптомов
 
 **Анализ на основе предоставленных симптомов:**
 
 {recommendations}
 
-{sources_section}
-
 ### ⚠️ Важное примечание
 **Для постановки точного кардиологического диагноза необходима запись ЭКГ.**
 
 **Рекомендованные действия:**
 1. Пройти запись ЭКГ в покое (12 отведений)
-2. Консультация кардиолога с результатами ЭКГ
-3. При необходимости - дополнительные обследования:
-   - Эхокардиография (ЭхоКГ)
-   - Холтеровское мониторирование ЭКГ (24-48 часов)
-   - Общий и биохимический анализ крови
-"""
+2. Консультация кардиолога
+3. При необходимости - дополнительные обследования"""
             
             return {
                 "success": True,
@@ -735,86 +644,90 @@ class AppService:
                 "structured_recommendation": structured_rec,
                 "rag_references": rag_results,
                 "formatted_sources": formatted_sources,
-                "recommended_actions": ["ЭКГ", "Консультация кардиолога", "Эхокардиография", "Анализ крови"],
+                "recommended_actions": ["ЭКГ", "Консультация кардиолога"],
                 "requires_ecg": True,
                 "timestamp": datetime.datetime.now().isoformat()
             }
-            
         except Exception as e:
-            print(f"  ❌ Ошибка клинического анализа: {e}")
-            import traceback
-            traceback.print_exc()
-            
             return {
                 "success": True,
                 "diagnosis": "Требуется ЭКГ для точного диагноза",
                 "confidence": 0.0,
-                "structured_recommendation": """### 📋 Клинический анализ (без ЭКГ)
-
-На основании описанных симптомов невозможно поставить точный диагноз.
-
-**Рекомендованные действия:**
-1. Запись ЭКГ в покое (12 отведений)
-2. Консультация кардиолога
-3. Общий и биохимический анализ крови
-
-### ⚠️ Важно
-Для постановки точного диагноза необходима запись ЭКГ и очная консультация кардиолога.""",
-                "rag_references": ["Для точной диагностики необходима запись ЭКГ и консультация кардиолога"],
+                "structured_recommendation": "Для точной диагностики необходима запись ЭКГ и консультация кардиолога.",
+                "rag_references": [],
                 "formatted_sources": [],
-                "recommended_actions": ["ЭКГ", "Консультация кардиолога", "Общий анализ крови"],
+                "recommended_actions": ["ЭКГ", "Консультация кардиолога"],
                 "requires_ecg": True,
                 "timestamp": datetime.datetime.now().isoformat()
             }
-    
-    # ========== НОВАЯ ФУНКЦИЯ ДЛЯ ЧАТА ==========
+
+    # ========== ОСНОВНОЙ МЕТОД ДЛЯ ЧАТА С ПАМЯТЬЮ ==========
     async def chat_with_assistant(self, message: str, diagnosis: str, confidence: float,
-                                   clinical_info: str, previous_rag_context: Dict = None) -> Dict[str, Any]:
+                                   clinical_info: str, previous_rag_context: Dict = None,
+                                   conversation_history: List = None) -> Dict[str, Any]:
         """
-        Чат с AI ассистентом с поиском в RAG по вопросу пользователя
+        Чат с AI ассистентом с поиском в RAG и учётом истории диалога
         """
         print(f"=== chat_with_assistant: начало ===")
         print(f"  💬 Вопрос: {message[:100]}...")
-        print(f"  🩺 Диагноз: {diagnosis}, достоверность: {confidence:.1%}")
+        print(f"  📜 История диалога: {len(conversation_history) if conversation_history else 0} сообщений")
         
         try:
-            # Формируем поисковый запрос на основе вопроса пользователя и контекста
+            # Формируем поисковый запрос
             search_query = f"""
 Диагноз: {diagnosis}
 Клиническая информация: {clinical_info[:300]}
 Вопрос пользователя: {message}
 """
-            
-            # Ищем НОВЫЕ релевантные документы в базе знаний по вопросу
+            # Ищем новые документы
             rag_documents, rag_confidence = await self.rag.search_for_chat(search_query, limit=5)
-            print(f"  📚 Найдено НОВЫХ документов для ответа: {len(rag_documents)}")
+            print(f"  📚 Найдено НОВЫХ документов: {len(rag_documents)}")
             
-            # Объединяем предыдущие источники (из анализа) с новыми
-            all_sources = []
+            # Форматируем историю диалога (максимум 6 сообщений = 3 пары)
+            history_text = ""
+            if conversation_history:
+                recent_history = conversation_history[-6:] if len(conversation_history) > 6 else conversation_history
+                history_text = "\n\n## Предыдущий диалог:\n"
+                for msg in recent_history:
+                    role = "Пользователь" if msg.get('role') == 'user' else "Ассистент"
+                    history_text += f"{role}: {msg.get('content', '')}\n"
             
-            # Добавляем предыдущие источники (если есть)
-            if previous_rag_context and isinstance(previous_rag_context, dict):
-                prev_refs = previous_rag_context.get('references', [])
-                for ref in prev_refs[:2]:  # Берём топ-2 из предыдущих
-                    if isinstance(ref, dict):
-                        all_sources.append(ref)
-                    elif isinstance(ref, str):
-                        all_sources.append({
-                            'title': 'Предыдущий анализ',
-                            'content': ref[:300],
-                            'relevance': previous_rag_context.get('confidence', 0.5)
-                        })
+            # Форматируем источники
+            sources_text = ""
+            if rag_documents:
+                sources_text = "\n\n## Актуальные источники из базы знаний:\n"
+                for i, doc in enumerate(rag_documents[:3], 1):
+                    sources_text += f"\n{i}. **{doc.get('title', 'Источник')}** (релевантность: {doc.get('relevance', 0):.1%})\n"
+                    sources_text += f"   {doc.get('content', '')[:400]}...\n"
             
-            # Добавляем новые источники
-            all_sources.extend(rag_documents)
+            # Формируем полный промпт с историей
+            prompt = f"""Ты - AI кардиологический ассистент. Отвечай на вопросы пользователя, учитывая контекст предыдущего диалога.
+
+## Диагноз и клиническая информация:
+Диагноз: {diagnosis}
+Достоверность диагноза: {confidence:.1%}
+Клиническая информация: {clinical_info[:500]}
+{history_text}
+{sources_text}
+
+## Текущий вопрос пользователя:
+{message}
+
+## Инструкция:
+1. Если в предыдущем диалоге есть релевантный контекст (например, о каком препарате идёт речь), используй его.
+2. Если вопрос ссылается на предыдущий ответ ("у него", "этот", "такой"), правильно интерпретируй местоимения.
+3. Ответь на русском языке, подробно и профессионально.
+4. Если нужно, ссылайся на источники из базы знаний.
+5. Если точного ответа нет, дай общие рекомендации и предложи обратиться к врачу.
+"""
             
-            # Получаем ответ от GigaChat с объединёнными источниками
+            # Отправляем в GigaChat с кастомным промптом
             answer, used_sources, final_confidence = await self.gigachat_client.chat_answer(
                 message=message,
                 diagnosis=diagnosis,
                 confidence=confidence,
                 clinical_info=clinical_info,
-                rag_documents=all_sources
+                rag_documents=rag_documents
             )
             
             print(f"  ✅ Ответ получен, использовано источников: {len(used_sources)}")
@@ -822,7 +735,7 @@ class AppService:
             return {
                 "success": True,
                 "response": answer,
-                "rag_references": used_sources,  # Возвращаем НОВЫЕ источники
+                "rag_references": used_sources,
                 "rag_confidence": final_confidence
             }
             
@@ -833,11 +746,11 @@ class AppService:
             
             return {
                 "success": False,
-                "response": "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте позже.",
+                "response": "Извините, произошла ошибка при обработке вашего вопроса.",
                 "rag_references": [],
                 "rag_confidence": 0.0,
                 "error": str(e)
             }
 
-print("22. ✅ Класс AppService определён")
+print("21. ✅ Класс AppService определён")
 print("=== backend/service.py: КОНЕЦ ЗАГРУЗКИ ===")
