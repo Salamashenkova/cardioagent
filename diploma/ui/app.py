@@ -641,4 +641,4 @@ if st.sidebar.button("🔄 Обновить статус"):
     st.cache_data.clear()
     st.rerun()
 
-Ответить
+
