@@ -616,7 +616,7 @@ with tab4:
 
 st.markdown("---")
 st.markdown(
-    "<div style='text-align: center; color: gray; padding: 1rem;'>© 2024 GigaCardioAgent - Ваш AI кардиолог | Работает на GigaChat и нейронных сетях</div>",
+    "<div style='text-align: center; color: gray; padding: 1rem;'>© 2026 GigaCardioAgent - Ваш AI кардиолог | Работает на GigaChat и нейронных сетях</div>",
     unsafe_allow_html=True
 )
 
