@@ -65,20 +65,24 @@ class Config:
         if self.model_path.exists():
             print(f"   ✅ Модель найдена по пути: {self.model_path}")
             return self.model_path
+
         api_relative = Path("../") / self.model_path
         if api_relative.exists():
             print(f"   ✅ Модель найдена по пути: {api_relative}")
             return api_relative
+
         root_relative = Path(".") / self.model_path
         if root_relative.exists():
             print(f"   ✅ Модель найдена по пути: {root_relative}")
             return root_relative
+
         models_dir = Path("models")
         if models_dir.exists():
             pth_files = list(models_dir.glob("*.pth"))
             if pth_files:
                 print(f"   ✅ Найден файл модели: {pth_files[0]}")
                 return pth_files[0]
+
         print(f"   ⚠️ Модель не найдена по путям: {self.model_path}, {api_relative}, {root_relative}")
         return self.model_path
 
@@ -138,7 +142,11 @@ class QdrantRAG:
         if config.qdrant_url and config.qdrant_api_key:
             try:
                 print(f"   Подключаемся к Qdrant: {config.qdrant_url}")
-                self.client = QdrantClient(url=config.qdrant_url, api_key=config.qdrant_api_key, timeout=60.0)
+                self.client = QdrantClient(
+                    url=config.qdrant_url,
+                    api_key=config.qdrant_api_key,
+                    timeout=60.0
+                )
                 print("   ✅ Qdrant подключен")
             except Exception as e:
                 self.client = None
@@ -176,8 +184,10 @@ class QdrantRAG:
     async def search_similar(self, diagnosis: str, clinical: str, limit: int = 10) -> Tuple[List[str], float]:
         if not self.client:
             return ["Qdrant недоступен - используем общие рекомендации"], 0.0
+
         query_text = f"{diagnosis} {clinical}".strip() if diagnosis else clinical
         print(f"   🔍 Поиск в базе знаний: {query_text[:100]}...")
+
         try:
             query_vec = self.embedding_model.encode(query_text).tolist()
             hits = self.client.query_points(
@@ -186,14 +196,20 @@ class QdrantRAG:
                 limit=limit * 2,
                 score_threshold=0.65
             )
+
             deduped = self._deduplicate_documents(hits.points)
             if not deduped:
                 return ["Не найдено релевантных документов в базе знаний"], 0.0
+
             sorted_results = sorted(deduped, key=lambda x: x["score"], reverse=True)[:limit]
-            results = [f"**{item['title']}** (релевантность: {item['score']:.2f})\n{item['content'][:500]}..." for item in sorted_results]
+            results = [
+                f"**{item['title']}** (релевантность: {item['score']:.2f})\n{item['content'][:500]}..."
+                for item in sorted_results
+            ]
             avg_rag_confidence = float(np.mean([item["score"] for item in sorted_results])) if sorted_results else 0.0
             print(f"   📊 Найдено источников: {len(results)}, средняя уверенность RAG: {avg_rag_confidence:.3f}")
             return results, avg_rag_confidence
+
         except Exception as e:
             print(f"   Qdrant search error: {e}")
             return ["Ошибка поиска в базе знаний. Используем общие рекомендации."], 0.0
@@ -201,7 +217,9 @@ class QdrantRAG:
     async def search_for_chat(self, query: str, limit: int = 5) -> Tuple[List[Dict], float]:
         if not self.client:
             return [], 0.0
+
         print(f"   🔍 Чат-поиск в базе знаний: {query[:100]}...")
+
         try:
             query_vec = self.embedding_model.encode(query).tolist()
             hits = self.client.query_points(
@@ -210,13 +228,16 @@ class QdrantRAG:
                 limit=limit * 2,
                 score_threshold=0.65
             )
+
             deduped = self._deduplicate_documents(hits.points)
             if not deduped:
                 return [], 0.0
+
             sorted_results = sorted(deduped, key=lambda x: x["score"], reverse=True)[:limit]
             avg_relevance = float(np.mean([item["score"] for item in sorted_results])) if sorted_results else 0.0
             print(f"   📊 Для чата найдено источников: {len(sorted_results)}")
             return sorted_results, avg_relevance
+
         except Exception as e:
             print(f"   Чат-поиск error: {e}")
             return [], 0.0
@@ -244,9 +265,11 @@ class GigaChatClient:
             print("   ✅ GigaChat инициализирован")
         return self._gigachat
 
-    async def chat_with_rag(self, diagnosis: str, clinical: str, confidence: float, rag_context: List[str], response_format: str = "structured") -> str:
+    async def chat_with_rag(self, diagnosis: str, clinical: str, confidence: float,
+                            rag_context: List[str], response_format: str = "structured") -> str:
         if not self.gigachat:
             return "🚨 GigaChat недоступен"
+
         context = "\n═══\n".join(rag_context[:3])
         if response_format == "structured":
             prompt = f"""Пациент: {clinical}
@@ -264,6 +287,7 @@ class GigaChatClient:
 {context}
 
 Дай четкие клинические рекомендации."""
+
         for attempt in range(3):
             try:
                 chunks = []
@@ -277,15 +301,18 @@ class GigaChatClient:
                 await asyncio.sleep(2 ** attempt)
         return "🚨 GIGA OFFLINE: АСА 160мг + ЭКГ повтор + кардиолог ОЧНО"
 
-    async def chat_answer(self, message: str, diagnosis: str, confidence: float, clinical_info: str, rag_documents: List[Dict]) -> Tuple[str, List[Dict], float]:
+    async def chat_answer(self, message: str, diagnosis: str, confidence: float,
+                          clinical_info: str, rag_documents: List[Dict]) -> Tuple[str, List[Dict], float]:
         if not self.gigachat:
             return "🚨 GigaChat недоступен", [], 0.0
+
         sources_text = ""
         if rag_documents:
             sources_text = "\n\n📚 АКТУАЛЬНЫЕ ИСТОЧНИКИ ИЗ БАЗЫ ЗНАНИЙ:\n"
             for i, doc in enumerate(rag_documents[:5], 1):
                 sources_text += f"\n{i}. **{doc.get('title', 'Источник')}** (релевантность: {doc.get('relevance', 0):.1%})\n"
                 sources_text += f"   {doc.get('content', '')[:400]}...\n"
+
         prompt = f"""Ты - AI кардиологический ассистент. Отвечай на вопросы пользователя профессионально и по существу.
 
 ДИАГНОЗ: {diagnosis}
@@ -299,6 +326,7 @@ class GigaChatClient:
 Если в источниках есть релевантная информация, обязательно используй её и ссылайся на источники.
 Если точного ответа нет, дай общие рекомендации и предложи обратиться к врачу.
 Будь полезным, но не давай опасных советов - всегда рекомендуй консультацию с врачом при необходимости."""
+
         for attempt in range(3):
             try:
                 chunks = []
@@ -312,6 +340,7 @@ class GigaChatClient:
             except Exception as e:
                 print(f"   Chat retry {attempt+1}: {e}")
                 await asyncio.sleep(2 ** attempt)
+
         return "🚨 Сервис временно недоступен. Пожалуйста, попробуйте позже.", [], 0.0
 
 print("18. ✅ Класс GigaChatClient определён")
@@ -456,11 +485,14 @@ class AppService:
     def _preprocess_ecg(self, ecg_data: np.ndarray) -> torch.Tensor:
         if ecg_data.shape != (12, 5000):
             raise ValueError(f"Ожидается (12, 5000), получено {ecg_data.shape}")
+
         mean = ecg_data.mean(axis=1, keepdims=True)
         std = ecg_data.std(axis=1, keepdims=True) + 1e-8
         ecg_normalized = (ecg_data - mean) / std
+
         kernel = np.ones(5) / 5
         ecg_filtered = np.array([np.convolve(lead, kernel, mode='same') for lead in ecg_normalized])
+
         ecg_tensor = torch.tensor(ecg_filtered, dtype=torch.float32).unsqueeze(0)
         return ecg_tensor.to(self.config.device)
 
@@ -476,6 +508,7 @@ class AppService:
                 class_name = CLASS_NAMES[top3_indices[0][i].item()]
                 prob = top3_probs[0][i].item()
                 top3_predictions.append((class_name, prob))
+
         diagnosis = CLASS_NAMES[predicted_idx.item()]
         confidence = confidence.item()
         return diagnosis, confidence, top3_predictions
