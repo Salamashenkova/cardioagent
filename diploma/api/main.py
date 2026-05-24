@@ -1,3 +1,5 @@
+
+# diploma/api/main.py
 import sys
 from pathlib import Path
 
@@ -80,7 +82,7 @@ async def root():
             "health": "GET /health",
             "analyze_ecg": "POST /analyze_ecg (file + clinical)",
             "analyze_clinical": "POST /analyze_clinical (только текст)",
-            "chat": "POST /chat (RAG чат)"
+            "chat": "POST /chat (RAG чат с памятью)"
         },
         "device": service.config.device if service else "unknown",
         "model_loaded": service.model is not None if service else False,
@@ -189,31 +191,43 @@ async def chat(
         raise HTTPException(503, "Сервис не инициализирован")
     
     try:
-        # Парсим rag_context из строки
+        # Парсим rag_context из строки (теперь содержит conversation_history)
         try:
-            if rag_context and rag_context != "null" and rag_context != "{}" and rag_context != "[]":
-                previous_rag = json.loads(rag_context)
+            if rag_context and rag_context != "null" and rag_context != "{}":
+                context_data = json.loads(rag_context)
             else:
-                previous_rag = None
+                context_data = {}
         except json.JSONDecodeError:
             print(f"   ⚠️ Ошибка парсинга rag_context: {rag_context[:100]}")
-            previous_rag = None
+            context_data = {}
         
-        # Используем метод чата из service с НОВЫМ поиском
+        previous_rag = context_data.get('references', [])
+        conversation_history = context_data.get('conversation_history', [])
+        
+        # Используем метод чата из service с передачей истории диалога
         result = await service.chat_with_assistant(
             message=message,
             diagnosis=diagnosis if diagnosis else "Неизвестно",
             confidence=confidence,
             clinical_info=clinical_info,
-            previous_rag_context=previous_rag
+            previous_rag_context=previous_rag,
+            conversation_history=conversation_history
         )
         
         if result.get("success"):
-            # ВОЗВРАЩАЕМ ИСТОЧНИКИ КАК ЕСТЬ (НЕ ПРЕОБРАЗУЕМ В СТРОКИ!)
+            # Форматируем источники для ответа
+            rag_references = []
+            for doc in result.get("rag_references", []):
+                if isinstance(doc, dict):
+                    formatted_ref = f"**{doc.get('title', 'Источник')}** (релевантность: {doc.get('relevance', 0):.1%})\n{doc.get('content', '')[:500]}..."
+                    rag_references.append(formatted_ref)
+                else:
+                    rag_references.append(str(doc))
+            
             return {
                 "success": True,
                 "response": result.get("response", ""),
-                "rag_references": result.get("rag_references", []),  # ← Оставляем как список словарей
+                "rag_references": rag_references,
                 "rag_confidence": result.get("rag_confidence", 0.0),
                 "context": {
                     "diagnosis": diagnosis,
