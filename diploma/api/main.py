@@ -31,8 +31,8 @@ except Exception as e:
 
 print("10. Создаём FastAPI приложение...")
 app = FastAPI(
-    title="🚀 GigaCardioAgent API v2.0", 
-    version="2.0", 
+    title="🚀 GigaCardioAgent API v2.1",
+    version="2.1",
     root_path="/"
 )
 print("11. ✅ FastAPI приложение создано")
@@ -50,15 +50,12 @@ async def startup_event():
         service = AppService()
         print("15. ✅ AppService успешно создан!")
         print(f"16. service.config.device = {service.config.device}")
-        print(f"17. service.model is None? {service.model is None}")
-        print(f"18. service.rag is None? {service.rag is None}")
-        print(f"19. service.gigachat_client is None? {service.gigachat_client is None}")
     except Exception as e:
         print(f"15. ❌ Ошибка при создании AppService: {e}")
         import traceback
         traceback.print_exc()
         raise
-    
+
     print("=== ВСЕ ЗАРЕГИСТРИРОВАННЫЕ МАРШРУТЫ ===")
     for route in app.routes:
         methods = getattr(route, 'methods', None)
@@ -74,8 +71,14 @@ print("20. Регистрируем корневой эндпоинт...")
 @app.get("/")
 async def root():
     print("*** ВЫЗВАН КОРНЕВОЙ ЭНДПОИНТ ***")
+    model_loaded = False
+    try:
+        model_loaded = service is not None and service.model is not None
+    except Exception:
+        model_loaded = False
+
     return {
-        "message": "🚀 GigaCardioAgent API v2.0 ready!",
+        "message": "🚀 GigaCardioAgent API v2.1 ready!",
         "endpoints": {
             "health": "GET /health",
             "analyze_ecg": "POST /analyze_ecg (file + clinical)",
@@ -83,7 +86,7 @@ async def root():
             "chat": "POST /chat (RAG чат)"
         },
         "device": service.config.device if service else "unknown",
-        "model_loaded": service.model is not None if service else False,
+        "model_loaded": model_loaded,
         "classes": CLASS_NAMES
     }
 print("21. ✅ Корневой эндпоинт зарегистрирован")
@@ -92,11 +95,17 @@ print("22. Регистрируем health эндпоинт...")
 @app.get("/health")
 async def health():
     print("*** ВЫЗВАН HEALTH ЭНДПОИНТ ***")
+    model_loaded = False
+    try:
+        model_loaded = service is not None and service.model is not None
+    except Exception:
+        model_loaded = False
+
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "device": service.config.device if service else "cpu",
-        "model_loaded": service.model is not None if service else False,
+        "model_loaded": model_loaded,
         "classes": CLASS_NAMES
     }
 print("23. ✅ Health эндпоинт зарегистрирован")
@@ -109,20 +118,20 @@ async def analyze_ecg(
 ):
     print(f"*** ВЫЗВАН analyze_ecg: clinical_info={clinical_info[:50] if clinical_info else 'empty'}... ***")
     if not service:
-        raise HTTPException(503, "Сервис не инициализирован")
-    
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
     try:
         file_content = await ecg_file.read()
-        
+
         result = await service.process_ecg(
             ecg_file_content=file_content,
             filename=ecg_file.filename,
             clinical_notes=clinical_info
         )
-        
+
         if not result.get("success"):
-            raise HTTPException(500, result.get("error", "Ошибка анализа"))
-        
+            raise HTTPException(status_code=500, detail=result.get("error", "Ошибка анализа"))
+
         return {
             "success": True,
             "diagnosis": result["diagnosis"],
@@ -135,11 +144,11 @@ async def analyze_ecg(
             "clinical_info": clinical_info,
             "timestamp": result["timestamp"]
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"Ошибка анализа ЭКГ: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка анализа ЭКГ: {str(e)}")
 print("25. ✅ analyze_ecg эндпоинт зарегистрирован")
 
 print("26. Регистрируем analyze_clinical эндпоинт...")
@@ -147,11 +156,11 @@ print("26. Регистрируем analyze_clinical эндпоинт...")
 async def analyze_clinical(clinical_info: str = Form(...)):
     print(f"*** ВЫЗВАН analyze_clinical: clinical_info={clinical_info[:50] if clinical_info else 'empty'}... ***")
     if not service:
-        raise HTTPException(503, "Сервис не инициализирован")
-    
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
     try:
         result = await service.analyze_clinical_only(clinical_info)
-        
+
         return {
             "success": True,
             "mode": "clinical_only",
@@ -166,11 +175,11 @@ async def analyze_clinical(clinical_info: str = Form(...)):
             "requires_ecg": result.get("requires_ecg", True),
             "timestamp": result.get("timestamp", datetime.now().isoformat())
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"Ошибка клинического анализа: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка клинического анализа: {str(e)}")
 print("27. ✅ analyze_clinical эндпоинт зарегистрирован")
 
 print("28. Регистрируем chat эндпоинт...")
@@ -184,22 +193,20 @@ async def chat(
 ):
     print(f"*** ВЫЗВАН chat: message={message[:50] if message else 'empty'}... ***")
     print(f"    diagnosis={diagnosis}, confidence={confidence}")
-    
+
     if not service:
-        raise HTTPException(503, "Сервис не инициализирован")
-    
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
     try:
-        # Парсим rag_context из строки
         try:
-            if rag_context and rag_context != "null" and rag_context != "{}" and rag_context != "[]":
+            if rag_context and rag_context not in ("null", "{}", "[]"):
                 previous_rag = json.loads(rag_context)
             else:
                 previous_rag = None
         except json.JSONDecodeError:
             print(f"   ⚠️ Ошибка парсинга rag_context: {rag_context[:100]}")
             previous_rag = None
-        
-        # Используем метод чата из service с НОВЫМ поиском
+
         result = await service.chat_with_assistant(
             message=message,
             diagnosis=diagnosis if diagnosis else "Неизвестно",
@@ -207,34 +214,35 @@ async def chat(
             clinical_info=clinical_info,
             previous_rag_context=previous_rag
         )
-        
+
         if result.get("success"):
-            # ВОЗВРАЩАЕМ ИСТОЧНИКИ КАК ЕСТЬ (НЕ ПРЕОБРАЗУЕМ В СТРОКИ!)
             return {
                 "success": True,
                 "response": result.get("response", ""),
-                "rag_references": result.get("rag_references", []),  # ← Оставляем как список словарей
+                "rag_references": result.get("rag_references", []),
                 "rag_confidence": result.get("rag_confidence", 0.0),
+                "memory": result.get("memory", {"messages": [], "sources": []}),
                 "context": {
                     "diagnosis": diagnosis,
                     "confidence": confidence,
                     "clinical_info": clinical_info[:200] if clinical_info else ""
                 }
             }
-        else:
-            return {
-                "success": False,
-                "response": result.get("response", "Извините, произошла ошибка"),
-                "rag_references": [],
-                "rag_confidence": 0.0,
-                "error": result.get("error", "Unknown error")
-            }
-        
+
+        return {
+            "success": False,
+            "response": result.get("response", "Извините, произошла ошибка"),
+            "rag_references": [],
+            "rag_confidence": 0.0,
+            "memory": result.get("memory", {"messages": [], "sources": []}),
+            "error": result.get("error", "Unknown error")
+        }
+
     except Exception as e:
         print(f"   ❌ Ошибка чата: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(500, f"Ошибка чата: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка чата: {str(e)}")
 print("29. ✅ chat эндпоинт зарегистрирован")
 
 print("30. Регистрируем обработчик исключений...")
@@ -247,5 +255,3 @@ async def http_exception_handler(request, exc: HTTPException):
 print("31. ✅ Обработчик исключений зарегистрирован")
 
 print("=== main.py: КОНЕЦ ЗАГРУЗКИ ===")
-
-
