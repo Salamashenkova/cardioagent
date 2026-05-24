@@ -12,6 +12,7 @@ print(f"4. sys.path после добавления: {sys.path}")
 print("5. Импортируем fastapi и другие модули...")
 from fastapi import FastAPI, UploadFile, HTTPException, File, Form
 from starlette.responses import JSONResponse
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uvicorn
 import json
@@ -30,8 +31,8 @@ except Exception as e:
 
 print("10. Создаём FastAPI приложение...")
 app = FastAPI(
-    title="🚀 GigaCardioAgent API v2.0",
-    version="2.0",
+    title="🚀 GigaCardioAgent API v2.0", 
+    version="2.0", 
     root_path="/"
 )
 print("11. ✅ FastAPI приложение создано")
@@ -49,12 +50,15 @@ async def startup_event():
         service = AppService()
         print("15. ✅ AppService успешно создан!")
         print(f"16. service.config.device = {service.config.device}")
+        print(f"17. service.model is None? {service.model is None}")
+        print(f"18. service.rag is None? {service.rag is None}")
+        print(f"19. service.gigachat_client is None? {service.gigachat_client is None}")
     except Exception as e:
         print(f"15. ❌ Ошибка при создании AppService: {e}")
         import traceback
         traceback.print_exc()
         raise
-
+    
     print("=== ВСЕ ЗАРЕГИСТРИРОВАННЫЕ МАРШРУТЫ ===")
     for route in app.routes:
         methods = getattr(route, 'methods', None)
@@ -106,18 +110,19 @@ async def analyze_ecg(
     print(f"*** ВЫЗВАН analyze_ecg: clinical_info={clinical_info[:50] if clinical_info else 'empty'}... ***")
     if not service:
         raise HTTPException(503, "Сервис не инициализирован")
-
+    
     try:
         file_content = await ecg_file.read()
+        
         result = await service.process_ecg(
             ecg_file_content=file_content,
             filename=ecg_file.filename,
             clinical_notes=clinical_info
         )
-
+        
         if not result.get("success"):
             raise HTTPException(500, result.get("error", "Ошибка анализа"))
-
+        
         return {
             "success": True,
             "diagnosis": result["diagnosis"],
@@ -127,11 +132,10 @@ async def analyze_ecg(
             "structured_recommendation": result["structured_recommendation"],
             "full_cot_recommendation": result["full_cot_recommendation"],
             "rag_references": result["rag_references"],
-            "formatted_sources": result.get("rag_references", []),
             "clinical_info": clinical_info,
             "timestamp": result["timestamp"]
         }
-
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -144,10 +148,10 @@ async def analyze_clinical(clinical_info: str = Form(...)):
     print(f"*** ВЫЗВАН analyze_clinical: clinical_info={clinical_info[:50] if clinical_info else 'empty'}... ***")
     if not service:
         raise HTTPException(503, "Сервис не инициализирован")
-
+    
     try:
         result = await service.analyze_clinical_only(clinical_info)
-
+        
         return {
             "success": True,
             "mode": "clinical_only",
@@ -157,12 +161,12 @@ async def analyze_clinical(clinical_info: str = Form(...)):
             "clinical_info": clinical_info,
             "structured_recommendation": result.get("structured_recommendation", ""),
             "rag_references": result.get("rag_references", []),
-            "formatted_sources": result.get("formatted_sources", result.get("rag_references", [])),
+            "formatted_sources": result.get("formatted_sources", []),
             "recommended_actions": result.get("recommended_actions", []),
             "requires_ecg": result.get("requires_ecg", True),
             "timestamp": result.get("timestamp", datetime.now().isoformat())
         }
-
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -180,20 +184,22 @@ async def chat(
 ):
     print(f"*** ВЫЗВАН chat: message={message[:50] if message else 'empty'}... ***")
     print(f"    diagnosis={diagnosis}, confidence={confidence}")
-
+    
     if not service:
         raise HTTPException(503, "Сервис не инициализирован")
-
+    
     try:
+        # Парсим rag_context из строки
         try:
-            if rag_context and rag_context not in ("null", "{}", "[]"):
+            if rag_context and rag_context != "null" and rag_context != "{}" and rag_context != "[]":
                 previous_rag = json.loads(rag_context)
             else:
                 previous_rag = None
         except json.JSONDecodeError:
             print(f"   ⚠️ Ошибка парсинга rag_context: {rag_context[:100]}")
             previous_rag = None
-
+        
+        # Используем метод чата из service с НОВЫМ поиском
         result = await service.chat_with_assistant(
             message=message,
             diagnosis=diagnosis if diagnosis else "Неизвестно",
@@ -201,30 +207,29 @@ async def chat(
             clinical_info=clinical_info,
             previous_rag_context=previous_rag
         )
-
+        
         if result.get("success"):
+            # ВОЗВРАЩАЕМ ИСТОЧНИКИ КАК ЕСТЬ (НЕ ПРЕОБРАЗУЕМ В СТРОКИ!)
             return {
                 "success": True,
                 "response": result.get("response", ""),
-                "rag_references": result.get("rag_references", []),
+                "rag_references": result.get("rag_references", []),  # ← Оставляем как список словарей
                 "rag_confidence": result.get("rag_confidence", 0.0),
-                "memory": result.get("memory", {"messages": [], "sources": []}),
                 "context": {
                     "diagnosis": diagnosis,
                     "confidence": confidence,
                     "clinical_info": clinical_info[:200] if clinical_info else ""
                 }
             }
-
-        return {
-            "success": False,
-            "response": result.get("response", "Извините, произошла ошибка"),
-            "rag_references": [],
-            "rag_confidence": 0.0,
-            "memory": result.get("memory", {"messages": [], "sources": []}),
-            "error": result.get("error", "Unknown error")
-        }
-
+        else:
+            return {
+                "success": False,
+                "response": result.get("response", "Извините, произошла ошибка"),
+                "rag_references": [],
+                "rag_confidence": 0.0,
+                "error": result.get("error", "Unknown error")
+            }
+        
     except Exception as e:
         print(f"   ❌ Ошибка чата: {e}")
         import traceback
@@ -242,3 +247,4 @@ async def http_exception_handler(request, exc: HTTPException):
 print("31. ✅ Обработчик исключений зарегистрирован")
 
 print("=== main.py: КОНЕЦ ЗАГРУЗКИ ===")
+
