@@ -143,7 +143,6 @@ def analyze_clinical_only(clinical_info):
 def chat_with_bot(message, diagnosis, confidence, clinical_info, rag_context):
     with st.spinner("🤔 Думаю..."):
         rag_context_str = json.dumps(rag_context, ensure_ascii=False) if rag_context else "{}"
-
         data = {
             "message": message,
             "diagnosis": diagnosis,
@@ -346,15 +345,27 @@ with tab2:
                 st.subheader("💡 Клинические рекомендации")
                 st.markdown(result.get('structured_recommendation', ''))
 
-                if result.get('formatted_sources'):
+                sources = result.get('formatted_sources', [])
+                if not sources:
+                    sources = result.get('rag_references', [])
+
+                if sources:
                     with st.expander("📚 Источники из базы знаний", expanded=True):
-                        for i, source in enumerate(result['formatted_sources'], 1):
-                            relevance = source.get('relevance', result.get('rag_confidence', 0.5))
+                        for i, source in enumerate(sources[:5], 1):
+                            if isinstance(source, dict):
+                                title = source.get('title', 'Источник')
+                                relevance = source.get('relevance', result.get('rag_confidence', 0.5))
+                                content = source.get('content', source.get('text', ''))
+                            else:
+                                title = f'Источник {i}'
+                                relevance = result.get('rag_confidence', 0.5)
+                                content = str(source)
+
                             st.markdown(f"""
                             <div class="source-card">
-                                <b>{i}. {source.get('title', 'Источник')}</b>
+                                <b>{i}. {title}</b>
                                 <span style="color: #666; font-size: 0.9em;">(релевантность: {relevance:.1%})</span><br/>
-                                {source.get('content', source.get('text', ''))[:300]}...
+                                {content[:300]}...
                             </div>
                             """, unsafe_allow_html=True)
 
@@ -363,7 +374,7 @@ with tab2:
                     for action in result['recommended_actions']:
                         st.markdown(f"- {action}")
 
-                sources_count = len(result.get('formatted_sources', []))
+                sources_count = len(sources) if sources else 0
                 if sources_count > 0:
                     st.caption(f"✅ Анализ основан на {sources_count} источниках из базы знаний")
 
