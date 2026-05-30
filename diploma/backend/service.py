@@ -1,4 +1,4 @@
-# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С ПАМЯТЬЮ В ЧАТЕ
+# diploma/backend/service.py - ПОЛНАЯ ВЕРСИЯ С МАППИНГОМ ДИАГНОЗОВ НА РУССКИЙ
 
 print("=== backend/service.py: НАЧАЛО ЗАГРУЗКИ ===")
 print("1. Импортируем базовые модули...")
@@ -95,7 +95,21 @@ print(f"10. Config создан: device={config.device}, model_path={config.mode
 CLASS_NAMES = ["NORM", "MI", "STTC", "CD", "HYP"]
 print(f"11. CLASS_NAMES = {CLASS_NAMES}")
 
-print("12. Определяем класс BM25...")
+# ============================================================
+# МАППИНГ ДИАГНОЗОВ НА РУССКИЙ ЯЗЫК
+# ============================================================
+# Документы в базе знаний Qdrant на русском языке, поэтому запрос тоже должен быть на русском
+DIAGNOSIS_TO_RUSSIAN = {
+    "NORM": "нормальная ЭКГ синусовый ритм",
+    "MI": "инфаркт миокарда",
+    "STTC": "изменения сегмента ST и зубца T брадикардия фибрилляция предсердий трепетание предсердий",
+    "CD": "нарушение внутрижелудочковой проводимости блокада ножек пучка Гиса",
+    "HYP": "гипертрофия желудочков атриовентрикулярная блокада AV блокада",
+    "Требуется ЭКГ для точного диагноза": "клинический анализ симптомов без ЭКГ"
+}
+print("12. ✅ Маппинг диагнозов на русский загружен")
+
+print("13. Определяем класс BM25...")
 class BM25:
     def __init__(self, docs, k1=1.2, b=0.75):
         self.k1, self.b = k1, b
@@ -130,9 +144,9 @@ class BM25:
             return [(s - min_score) / (max_score - min_score) for s in raw_scores]
         return [0.5] * len(raw_scores)
 
-print("13. ✅ Класс BM25 определён")
+print("14. ✅ Класс BM25 определён")
 
-print("14. Определяем класс QdrantRAG...")
+print("15. Определяем класс QdrantRAG...")
 class QdrantRAG:
     def __init__(self, config):
         print(f"   QdrantRAG.__init__: начало")
@@ -164,15 +178,21 @@ class QdrantRAG:
         return self._embedding_model
 
     async def search_similar(self, diagnosis: str, clinical: str, limit: int = 10) -> Tuple[List[str], float]:
+        """
+        Поиск похожих документов в базе знаний.
+        Диагноз транслируется на русский язык для лучшего соответствия с документами.
+        """
         if not self.client:
             return ["Qdrant недоступен - используем общие рекомендации"], 0.0
         
+        # Транслируем диагноз на русский язык (если есть в маппинге)
         if diagnosis and diagnosis != "Клинический анализ симптомов (без ЭКГ)":
-            query_text = f"{diagnosis} {clinical}"
+            diagnosis_ru = DIAGNOSIS_TO_RUSSIAN.get(diagnosis, diagnosis)
+            query_text = f"{diagnosis_ru} {clinical}"
+            print(f"   🔍 Поисковый запрос (русский диагноз): {query_text[:100]}...")
         else:
             query_text = clinical
-        
-        print(f"   🔍 Поиск в базе знаний: {query_text[:100]}...")
+            print(f"   🔍 Поисковый запрос (только клиника): {query_text[:100]}...")
         
         all_scores = []
         
@@ -207,7 +227,7 @@ class QdrantRAG:
                     }
             
             if not unique_by_content:
-                return ["Не найдено релевантных документов"], 0.0
+                return ["Не найдено релевантных документов в базе знаний"], 0.0
             
             sorted_results = sorted(
                 unique_by_content.values(), 
@@ -216,16 +236,20 @@ class QdrantRAG:
             )[:limit]
             
             results = [item['formatted'] for item in sorted_results]
+            
             avg_rag_confidence = sum(all_scores) / len(all_scores) if all_scores else 0.0
-            print(f"   📊 Найдено уникальных источников: {len(results)}, средняя уверенность: {avg_rag_confidence:.3f}")
+            print(f"   📊 Найдено уникальных источников: {len(results)}, средняя уверенность RAG: {avg_rag_confidence:.3f}")
             
             return results, avg_rag_confidence
             
         except Exception as e:
             print(f"   Qdrant search error: {e}")
-            return ["Ошибка поиска в базе знаний"], 0.0
+            return ["Ошибка поиска в базе знаний. Используем общие рекомендации."], 0.0
     
     async def search_for_chat(self, query: str, limit: int = 5) -> Tuple[List[Dict], float]:
+        """
+        Специальный поиск для чата - возвращает структурированные документы.
+        """
         if not self.client:
             return [], 0.0
         
@@ -280,9 +304,9 @@ class QdrantRAG:
             print(f"   Чат-поиск error: {e}")
             return [], 0.0
 
-print("15. ✅ Класс QdrantRAG определён")
+print("16. ✅ Класс QdrantRAG определён")
 
-print("16. Определяем класс GigaChatClient...")
+print("17. Определяем класс GigaChatClient...")
 class GigaChatClient:
     def __init__(self, config):
         print(f"   GigaChatClient.__init__: начало")
@@ -379,9 +403,9 @@ class GigaChatClient:
         
         return "Сервис временно недоступен", [], 0.0
 
-print("17. ✅ Класс GigaChatClient определён")
+print("18. ✅ Класс GigaChatClient определён")
 
-print("18. Определяем класс ProECGNet_SOTA...")
+print("19. Определяем класс ProECGNet_SOTA...")
 class ProECGNet_SOTA(nn.Module):
     def __init__(self, num_classes=5):
         super().__init__()
@@ -426,9 +450,9 @@ class ProECGNet_SOTA(nn.Module):
         x = x.squeeze(-1)
         return self.head(x)
 
-print("19. ✅ Класс ProECGNet_SOTA определён")
+print("20. ✅ Класс ProECGNet_SOTA определён")
 
-print("20. Определяем класс AppService...")
+print("21. Определяем класс AppService...")
 class AppService:
     def __init__(self):
         print("=== AppService.__init__: НАЧАЛО ===")
@@ -661,7 +685,7 @@ class AppService:
                 "timestamp": datetime.datetime.now().isoformat()
             }
 
-    # ========== ОСНОВНОЙ МЕТОД ДЛЯ ЧАТА С ПАМЯТЬЮ ==========
+    # ========== МЕТОД ДЛЯ ЧАТА С ПАМЯТЬЮ ==========
     async def chat_with_assistant(self, message: str, diagnosis: str, confidence: float,
                                    clinical_info: str, previous_rag_context: Dict = None,
                                    conversation_history: List = None) -> Dict[str, Any]:
@@ -673,9 +697,10 @@ class AppService:
         print(f"  📜 История диалога: {len(conversation_history) if conversation_history else 0} сообщений")
         
         try:
-            # Формируем поисковый запрос
+            # Формируем поисковый запрос с русским диагнозом
+            diagnosis_ru = DIAGNOSIS_TO_RUSSIAN.get(diagnosis, diagnosis)
             search_query = f"""
-Диагноз: {diagnosis}
+Диагноз: {diagnosis_ru}
 Клиническая информация: {clinical_info[:300]}
 Вопрос пользователя: {message}
 """
@@ -704,7 +729,7 @@ class AppService:
             prompt = f"""Ты - AI кардиологический ассистент. Отвечай на вопросы пользователя, учитывая контекст предыдущего диалога.
 
 ## Диагноз и клиническая информация:
-Диагноз: {diagnosis}
+Диагноз: {diagnosis_ru}
 Достоверность диагноза: {confidence:.1%}
 Клиническая информация: {clinical_info[:500]}
 {history_text}
@@ -714,14 +739,14 @@ class AppService:
 {message}
 
 ## Инструкция:
-1. Если в предыдущем диалоге есть релевантный контекст (например, о каком препарате идёт речь), используй его.
-2. Если вопрос ссылается на предыдущий ответ ("у него", "этот", "такой"), правильно интерпретируй местоимения.
+1. Если в предыдущем диалоге есть релевантный контекст, используй его.
+2. Если вопрос ссылается на предыдущий ответ, правильно интерпретируй местоимения.
 3. Ответь на русском языке, подробно и профессионально.
 4. Если нужно, ссылайся на источники из базы знаний.
 5. Если точного ответа нет, дай общие рекомендации и предложи обратиться к врачу.
 """
             
-            # Отправляем в GigaChat с кастомным промптом
+            # Отправляем в GigaChat
             answer, used_sources, final_confidence = await self.gigachat_client.chat_answer(
                 message=message,
                 diagnosis=diagnosis,
@@ -752,5 +777,5 @@ class AppService:
                 "error": str(e)
             }
 
-print("21. ✅ Класс AppService определён")
+print("22. ✅ Класс AppService определён")
 print("=== backend/service.py: КОНЕЦ ЗАГРУЗКИ ===")
