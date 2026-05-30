@@ -1,4 +1,3 @@
-
 # diploma/api/main.py
 import sys
 from pathlib import Path
@@ -262,3 +261,12 @@ print("31. ✅ Обработчик исключений зарегистрир�
 
 print("=== main.py: КОНЕЦ ЗАГРУЗКИ ===")
 
+if __name__ == "__main__":
+    print("🚀 Запуск сервера uvicorn...")
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
